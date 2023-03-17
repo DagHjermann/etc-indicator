@@ -1,0 +1,460 @@
+---
+title: "101_gam_data"
+format: 
+  html:
+    toc_
+editor: visual
+---
+
+* Reading data and doing some filtering  
+    - Selected and renamed variables   
+    - Data given as <loq and value >2.5 filtered out   
+    - Added x,y as geographic reference for positon in km (based on https://epsg.io/3034)   
+
+* Saves data as "Input_data/WISE_GWNO3_sel2.rda   
+
+* Some exploratory plots and tables   
+
+## 1. Packages  
+```{r, include=FALSE}
+
+# All of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
+library(dplyr)
+library(readr)
+library(readxl)
+library(lubridate)
+library(ggplot2)
+library(forcats)
+library(sp)
+
+library(maps)
+library(mapdata)
+country_borders <- map_data("world")  
+
+```
+
+
+## 2. Read data  
+
+### Read raw data  
+```{r}
+
+if (FALSE){
+
+  # Need only to do this once (therefore wrapped in FALSE)
+  # a bit slow (1-2 minutes)
+  
+  dat_all <- read_excel(
+    "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.xlsx",
+    col_types = "text")
+  str(dat_all)
+  saveRDS(dat_all,
+          "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.rda")
+}
+
+```
+
+### Filter data for OK measurements (resultMeanValue)    
+* Also sets NO3 data to numeric etc.   
+```{r}
+
+# Need only to do this once (therefore wrapped in FALSE)
+  
+if (FALSE){
+  
+  # Read data
+  dat_all <- readRDS(
+    "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.rda")
+  
+  
+  # Extract all 
+  x1 <- dat_all %>%
+    filter(resultMeanValue != "NULL") %>%
+    pull(resultMeanValue)
+  
+  # Checks
+  if (FALSE){
+    table(addNA(substr(x1,1,1)))
+    table(addNA(substr(x1,2,2)))
+    # Some are exponent numbers ("1E-3")
+    x1[substr(x1,2,2) == "E"]
+  }
+  
+  # Test convert to numeric (as.numeric)
+  x2 <- as.numeric(x1)
+  
+  # Check 1
+  x2_exponent <- x2[substr(x1,2,2) == "E"]
+  if (sum(is.na(x2_exponent)) > 0)
+    stop("Some exponent numbers are not converted to numbers")
+  
+  # Check 2
+  if (sum(is.na(x2)) > 0)
+    stop("Some numbers are not converted to numbers")
+  
+  # Check that all are 'GW' 
+  table(addNA(dat_all$waterBodyCategory))
+  
+  # Check that all are 'Nitrate'
+  table(addNA(dat_all$eeaIndicator))
+  
+  # Check that all are 'mg{no3}/L'
+  table(addNA(dat_all$resultUom))
+  
+  # NOTE: Several different
+  table(addNA(dat_all$procedureAnalysedFraction))
+  
+  # loq indicator
+  # Just a few (13) are NULL after we have filtered away 
+  #   resultMeanValue = NULL
+  head(dat_all$resultQualityMeanBelowLOQ, 200)
+  table(addNA(dat_all$resultQualityMeanBelowLOQ))
+  
+  dat <- dat_all %>%
+    filter(resultMeanValue != "NULL",
+           resultQualityMeanBelowLOQ %in% c("0","1")) %>%
+    mutate(resultMeanValue = as.numeric(resultMeanValue))  %>%
+    select(countryCode, 
+           monitoringSiteIdentifier, monitoringSiteIdentifierScheme, monitoringSiteName,
+           waterBodyIdentifier, waterBodyIdentifierScheme, waterBodyName, spatialUnitName,  
+           procedureAnalysedFraction, 
+           phenomenonTimeReferenceYear, resultQualityMeanBelowLOQ, resultMeanValue, 
+           lat, lon)
+  
+  
+  table(addNA(dat$resultQualityMeanBelowLOQ))
+  
+  # names(dat) %>% paste(collapse = ", ")
+  
+  saveRDS(dat,
+          "Data/WISE_GWNO3_sel.rda")
+
+  
+}
+
+
+```
+
+### Read data for analysis  
+```{r}
+
+dat_01 <- readRDS("Data/WISE_GWNO3_sel.rda")
+
+```
+
+
+### Filter values under loq and with value > 2.5    
+```{r}
+
+check <- dat_01 %>%
+  filter(resultQualityMeanBelowLOQ %in% "1")
+
+if (FALSE){
+
+  stem(check$resultMeanValue)
+  sort(check$resultMeanValue, decreasing = TRUE) %>% head(100)
+  sum(check$resultMeanValue > 2.5)
+  mean(check$resultMeanValue > 2.5)
+  
+}
+  
+dat_02 <- dat_01 %>%
+  filter(!(resultQualityMeanBelowLOQ %in% "1" & resultMeanValue > 2.5)) %>%
+  rename(no3 = resultMeanValue,
+         site = monitoringSiteIdentifier,
+         waterbody = waterBodyIdentifier,
+         year = phenomenonTimeReferenceYear) %>%
+  mutate(loq = ifelse(resultQualityMeanBelowLOQ == "1", "Under loq", "Over loq"),
+         year = as.numeric(year),
+         lon = as.numeric(lon) %>% round(3),
+         lat = as.numeric(lat) %>% round(3)) %>%
+  select(-resultQualityMeanBelowLOQ)
+
+nrow(dat_01)
+nrow(dat_02)
+
+```
+### Filter by geographic spread     
+
+#### Map  
+```{r}
+
+dat_02 %>%
+  distinct(lon, lat, countryCode, site) %>%
+  count(lon, lat, countryCode, name = "Number_of_sites") %>%
+  ggplot(aes(lon, lat, color = countryCode, size = Number_of_sites)) +
+  # annotation_map(country_borders, fill = "lightgreen") +
+  geom_point() +
+  annotation_map(country_borders, fill = NA, color = "red")
+
+```
+
+#### Filter  
+
+* Europe only  
+
+```{r}
+
+dat <- dat_02 %>%
+  filter(lat > 27 & lon > -15)
+  
+```
+
+
+### Add transformed coordinates  
+
+* Unit meters
+
+```{r}
+
+# These works on WIndows but not in Jupyterhub (se reformulatins below)
+# crs_longlat <- "+init=epsg:4326"
+# crs_ETRS89_extended <- "+init=epsg:3034"
+
+crs_longlat <- "+proj=longlat +datum=WGS84"
+crs_ETRS89_extended <- "+proj=lcc +lat_0=52 +lon_0=10 +lat_1=35 +lat_2=65 +x_0=4000000 +y_0=2800000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"
+
+SP <- SpatialPoints(dat[,c("lon", "lat")],
+         proj4string = CRS(crs_longlat)
+         )
+SP_trans <- spTransform(SP, CRS(crs_ETRS89_extended))
+
+# Add transformed coords to data set
+dat$x_orig <- SP_trans@coords[,1]
+dat$y_orig <- SP_trans@coords[,2]
+
+# Check
+# range(dat$x_orig, na.rm =TRUE)  
+# range(dat$y_orig, na.rm =TRUE)  
+
+# Km from lat = 27 & lon = -15
+SP_origo <- SpatialPoints(data.frame(lon = -15, lat = 27),
+         proj4string=CRS(crs_longlat))
+SP_origo_t <- spTransform(SP_origo, CRS(crs_ETRS89_extended))
+
+# Define x, y 
+dat$x <- (dat$x_orig - SP_origo_t@coords[,1])/1000
+dat$y <- (dat$y_orig - SP_origo_t@coords[,2])/1000
+
+# Check
+# range(dat$x, na.rm =TRUE)  
+# range(dat$y, na.rm =TRUE)  
+
+dat %>%
+  distinct(x, y, countryCode, site) %>%
+  count(x, y, countryCode, name = "Number_of_sites") %>%
+  ggplot(aes(x, y, color = countryCode, size = Number_of_sites)) +
+  # annotation_map(country_borders, fill = "lightgreen") +
+  geom_point() +
+  annotation_map(country_borders, fill = NA, color = "red") +
+  labs(title = "Coordinates in km from lat 27, lon-15")
+
+```
+### Also transform 'country_borders'  
+```{r}
+
+if (FALSE){
+  
+  # Need only to do this once (therefore wrapped in FALSE)
+  
+  SP <- SpatialPoints(country_borders[,c("long", "lat")],
+                      proj4string=CRS(crs_longlat)
+  )
+  SP_trans <- spTransform(SP, CRS(crs_ETRS89_extended))
+  
+  # Define x, y 
+  country_borders$x <- (SP_trans@coords[,1] - SP_origo_t@coords[,1])/1000
+  country_borders$y <- (SP_trans@coords[,2] - SP_origo_t@coords[,2])/1000
+
+  saveRDS(country_borders, "Input_data/country_borders.rda")
+
+}
+
+```
+
+## 3. Save filtered data  
+```{r}
+
+saveRDS(dat, "Input_data/WISE_GWNO3_sel2.rda")
+
+```
+
+
+## 4. Data patterns   
+
+### Number of sites per country  
+```{r}
+
+dat1 <- dat %>%
+  count(countryCode, name = "Number_of_data") %>%
+  arrange(desc(Number_of_data)) %>%
+  mutate(countryCode = fct_inorder(countryCode))
+
+ggplot(dat1, aes(countryCode, Number_of_data)) +
+  geom_col() +
+  coord_flip()
+
+dat2 <- dat %>%
+  distinct(site, countryCode) %>%
+  count(countryCode, name = "Number_of_sites") %>%
+  arrange(desc(Number_of_sites)) %>%
+  mutate(countryCode = fct_inorder(countryCode))
+
+ggplot(dat2, aes(countryCode, Number_of_sites)) +
+  geom_col() +
+  coord_flip()
+
+gg <- ggplot(left_join(dat1, dat2), aes(Number_of_sites, Number_of_data)) + 
+  geom_text(aes(label = countryCode), size = 3)
+
+gg
+gg + scale_x_log10() + scale_y_log10()
+
+```
+
+### Number of sites per country per year  
+```{r}
+
+sel_countries <- head(dat1$countryCode, 16)
+
+dat %>%
+  filter(countryCode %in% sel_countries) %>%
+  distinct(countryCode, year, site) %>%
+  count(countryCode, year, name = "no_of_sites") %>%
+  ggplot(aes(year, no_of_sites)) +
+  geom_point() + 
+  geom_line() +
+  facet_wrap(vars(countryCode))
+
+
+```
+
+
+#### Example of country data   
+
+```{r}
+
+dat %>%
+  filter(countryCode == "PL") %>%
+  distinct(countryCode, year, site) %>%
+  # filter(year < 2014) %>%
+  ggplot(aes(year, site)) +
+  geom_point() +
+  theme(axis.text.y = element_blank())
+
+
+```
+#### Types of time series   
+```{r}
+
+dat_summ <- dat %>%
+  filter(countryCode == "PL") %>%
+  distinct(countryCode, year, site) %>%
+  group_by(countryCode, site) %>%
+  summarize(
+    min_year = min(year),
+    max_year = max(year),
+    n_year = length(unique(year)), .groups = "drop"
+  ) %>%
+  count(countryCode, min_year, max_year, n_year, name = "Number_of_sites") %>%
+  arrange(desc(Number_of_sites)) %>%
+  mutate(n_perc = Number_of_sites/sum(Number_of_sites)*100) %>%
+  mutate(n_cum_perc = cumsum(n_perc))
+
+dat_summ %>% 
+  filter(n_cum_perc < 80)
+
+```
+
+
+### Number of sites and waterbodies 
+```{r}
+
+dat %>%
+  distinct(site, year) %>%
+  count(year, name = "Number_of_sites") %>%
+  ggplot(aes(year, Number_of_sites)) +
+  geom_point()
+
+dat %>%
+  distinct(waterbody, year) %>%
+  count(year, name = "Number_of_waterbodies") %>%
+  ggplot(aes(year, Number_of_waterbodies)) +
+  geom_point()
+
+```
+
+### Length of time covered vs. number of years     
+
+#### All data  
+```{r}
+
+dat %>%
+  distinct(site, year) %>%
+  group_by(site) %>%
+  summarise(
+    Number_of_years = n(),
+    Length_of_series = max(year)-min(year)+1) %>%
+  count(Length_of_series, Number_of_years) %>%
+  ggplot(aes(Length_of_series, Number_of_years, size = n)) +
+  geom_point()
+
+```
+
+#### All data  
+```{r}
+
+dat %>%
+  distinct(site, year) %>%
+  group_by(site) %>%
+  summarise(
+    Number_of_years = n(),
+    Length_of_series = max(year)-min(year)+1) %>%
+  count(Length_of_series, Number_of_years) %>%
+  ggplot(aes(Length_of_series, Number_of_years, size = n)) +
+  geom_point()
+
+```
+
+
+### Countries   
+```{r}
+
+dat %>%
+  distinct(countryCode, site, year) %>%
+  count(countryCode, year, name = "Number_of_sites") %>%
+  ggplot(aes(year, countryCode, size = Number_of_sites)) +
+  geom_point()
+
+dat %>%
+  distinct(countryCode, waterbody, year) %>%
+  count(countryCode, year, name = "Number_of_waterbodies") %>%
+  ggplot(aes(year, countryCode, size = Number_of_waterbodies)) +
+  geom_point()
+
+```
+
+### Geographic spread     
+
+#### By decade    
+```{r}
+
+
+dat %>%
+  mutate(
+    lon = floor(lon),
+    lat = floor(lat),
+    Decade = 10*floor(year/10)
+  ) %>%
+  distinct(lon, lat, countryCode, site, Decade) %>%
+  count(lon, lat, countryCode, Decade, name = "Number_of_sites") %>%
+  ggplot(aes(lon, lat, color = countryCode, size = Number_of_sites)) +
+  annotation_map(country_borders, fill = "lightgreen") +
+  geom_point() +
+  facet_wrap(vars(Decade))  +
+  annotation_map(country_borders, fill = NA, color = "red")
+
+
+```
+
+
