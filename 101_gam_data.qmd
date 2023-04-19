@@ -22,6 +22,7 @@ editor: visual
 library(dplyr)
 library(readr)
 library(readxl)
+library(glue)        # tidyverse, easier alternative to paste0
 library(lubridate)
 library(ggplot2)
 library(forcats)
@@ -44,15 +45,35 @@ if (FALSE){
   # Need only to do this once (therefore wrapped in FALSE)
   # a bit slow (1-2 minutes)
   
-  dat_all <- read_excel(
+  dat_all_site <- read_excel(
     "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.xlsx",
     col_types = "text")
-  str(dat_all)
-  saveRDS(dat_all,
+  str(dat_all_site)
+  saveRDS(dat_all_site,
           "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.rda")
 }
 
 ```
+
+### Read data aggregated by waterbody   
+```{r}
+
+if (FALSE){
+
+  # Need only to do this once (therefore wrapped in FALSE)
+  # a bit slow (1-2 minutes)
+  
+  dat_all_wb <- read_excel(
+    "Input_data/WISE_Indicators.indicators2020.AggregatedDataByWaterBody_Indicator_GWNO3.xlsx",
+    col_types = "text")
+  str(dat_all_wb)
+  saveRDS(dat_all_wb,
+          "Input_data/WISE_Indicators.indicators2020.AggregatedDataByWaterBody_Indicator_GWNO3.rda")
+}
+
+```
+
+
 
 ### Filter data for OK measurements (resultMeanValue)    
 * Also sets NO3 data to numeric etc.   
@@ -65,8 +86,7 @@ if (FALSE){
   # Read data
   dat_all <- readRDS(
     "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.rda")
-  
-  
+
   # Extract all 
   x1 <- dat_all %>%
     filter(resultMeanValue != "NULL") %>%
@@ -135,18 +155,76 @@ if (FALSE){
 
 ```
 
-### Read data for analysis  
+### Read site data for analysis  
 ```{r}
 
-dat_01 <- readRDS("Data/WISE_GWNO3_sel.rda")
+dat_01a <- readRDS("Data/WISE_GWNO3_sel.rda")
 
 ```
+
+### Add data aggregated by waterbody  
+
+* Only used where the water body has no site data  
+
+```{r}
+
+dat_all_wb1 <- readRDS("Input_data/WISE_Indicators.indicators2020.AggregatedDataByWaterBody_Indicator_GWNO3.rda")
+
+dat_all_wb2 <- dat_all_wb1 %>%
+  filter(resultMeanValue != "NULL",
+         resultQualityMeanBelowLOQ %in% c("0","1")) %>%
+  mutate(resultMeanValue = as.numeric(resultMeanValue))  %>%
+  select(countryCode, 
+         # monitoringSiteIdentifier, monitoringSiteIdentifierScheme, monitoringSiteName,
+         waterBodyIdentifier, waterBodyIdentifierScheme, waterBodyName, spatialUnitName,  
+         procedureAnalysedFraction, 
+         phenomenonTimeReferenceYear, resultQualityMeanBelowLOQ, resultMeanValue, 
+         lat, lon)
+
+wb1 <- unique(dat_01a$waterBodyIdentifier)
+wb2 <- unique(dat_all_wb1$waterBodyIdentifier)
+cat("Number of water bodies in 1) site data set and 2) water body data set: \n")
+length(wb1)
+length(wb2)
+
+wb_lacking <- setdiff(wb2, wb1)
+
+cat("Number of water bodies lacking in site data set: \n")
+length(wb_lacking)
+
+# Check
+# sum(wb_lacking %in% wb1)
+
+#
+# Add aggregated data for the lacking water bodies  
+# We use waterBodyIdentifier in place of monitoringSiteIdentifier (later just called 'site')
+#
+
+dat_01b <- bind_rows(
+    dat_01a %>%
+      mutate(
+        datatype = "Site"
+      ),
+    dat_all_wb2 %>%
+      filter(
+        waterBodyIdentifier %in% wb_lacking) %>%
+      mutate(
+        datatype = "Waterbody",
+        monitoringSiteIdentifier = waterBodyIdentifier)  # use waterBodyIdentifier in place of monitoringSiteIdentifier
+  )
+
+cat("Nmber of rows before and afetr: \n")
+nrow(dat_01a)
+nrow(dat_01b)
+
+```
+
 
 
 ### Filter values under loq and with value > 2.5    
 ```{r}
 
-check <- dat_01 %>%
+check <- dat_01b %>%
   filter(resultQualityMeanBelowLOQ %in% "1")
 
 if (FALSE){
@@ -158,7 +236,7 @@ if (FALSE){
   
 }
   
-dat_02 <- dat_01 %>%
+dat_02 <- dat_01b %>%
   filter(!(resultQualityMeanBelowLOQ %in% "1" & resultMeanValue > 2.5)) %>%
   rename(no3 = resultMeanValue,
          site = monitoringSiteIdentifier,
@@ -170,11 +248,14 @@ dat_02 <- dat_01 %>%
          lat = as.numeric(lat) %>% round(3)) %>%
   select(-resultQualityMeanBelowLOQ)
 
-nrow(dat_01)
+nrow(dat_01b)
 nrow(dat_02)
 
 ```
+
+
 ### Filter by geographic spread     
+
 
 #### Map  
 ```{r}
@@ -457,4 +538,43 @@ dat %>%
 
 ```
 
+### Interactive map  
+```{r}
+
+library(leaflet)  
+
+dat_pos_country <-  dat %>%
+  group_by(countryCode) %>%
+  summarize(lon = mean(lon), lat = mean(lat)) 
+
+dat_summary_country <- dat %>%
+  distinct(countryCode, waterbody, year) %>%
+  count(countryCode, year, name = "Number_of_waterbodies") %>%
+  group_by(countryCode) %>%
+  summarise(
+    Yr1 = min(year), Yr2 = max(year), Year_span = Yr2-Yr1+1, 
+    N_year = length(unique(year)), N_year_missing = Year_span-N_year,
+    Number_of_waterbodies = round(mean(Number_of_waterbodies),0)
+  ) %>%
+  left_join(dat_pos_country)
+
+
+```
+
+```{r}
+
+leaflet() %>%
+  addTiles() %>%
+  addMarkers(
+    lng = dat_summary_country$lon, lat = dat_summary_country$lat,
+    popup = with(dat_summary_country, 
+                 glue("{countryCode}<br>Year_span = {Year_span} ({Yr1} - {Yr2})<br>{N_year_missing} missing years<br>{Number_of_waterbodies} waterbodies"))
+  )
+
+# DE, DK, BE, AT, LI, SI (NL, LU, CH) - from 1990 (parantheses: 2000 or later)
+# NO, SE - from 2004
+# PL, CZ, SK - from 2001-2004
+# HR, BA, RS, ME, XK, MK, AL, BG, RO, EL (Greece)
+# LT, LV, EE (1990), FI 
+```
 
