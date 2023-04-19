@@ -7,9 +7,7 @@ format:
 editor: visual
 ---
 
-
-
-## 1. Packages  
+## 1. Packages
 
 ```{r, include=FALSE}
 
@@ -34,8 +32,7 @@ knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk
 
 ```
 
-
-## 2. Data  
+## 2. Data
 
 ```{r}
 
@@ -44,11 +41,9 @@ dat <- readRDS("Input_data/WISE_GWNO3_sel2.rda") %>%
 
 ```
 
+## 3. Test gam on country scale
 
-## 3. Test gam on country scale   
-
-
-### Select country  
+### Select country
 
 ```{r}
 
@@ -119,7 +114,9 @@ dat2 %>%
 
 
 ```
-### Map  
+
+### Map
+
 ```{r}
 
 if (countries == "FR"){
@@ -148,11 +145,10 @@ plot(border_pol)
 
 ```
 
+### 3.01 Stats
 
+#### Number of points per year
 
-### 3.01 Stats  
-
-#### Number of points per year  
 ```{r}
 
 df_no_sites_per_year <- dat2 %>%
@@ -164,7 +160,9 @@ ggplot(df_no_sites_per_year, aes(year, n)) +
   
 
 ```
-#### Map by year  
+
+#### Map by year
+
 ```{r}
 #| fig-height: 8
 #| fig-width: 7
@@ -177,8 +175,7 @@ dat2 %>%
 
 ```
 
-
-#### Types of time series    
+#### Types of time series
 
 ```{r}
 
@@ -206,7 +203,7 @@ df_timeseries_summ %>%
 
 ```
 
-#### "Holey-ness" of time series    
+#### "Holey-ness" of time series
 
 ```{r}
 
@@ -220,8 +217,8 @@ ggplot(df_timeseries_summ %>% filter(max_year >= 2020), aes(n_year, n_holes, siz
 
 ```
 
+#### Spatial patterns for two years with most data
 
-#### Spatial patterns for two years with most data    
 ```{r}
 
 yrs <- df_no_sites_per_year %>%
@@ -248,12 +245,12 @@ dat2 %>%
 
 ```
 
-### 3.02 Spatial GAM, single year(s)  
+### 3.02 Spatial GAM, single year(s)
 
-* Different types of splines  
-* No big difference  
+-   Different types of splines\
+-   No big difference
 
-#### Analysis using thin-plate splines  
+#### Analysis using thin-plate splines
 
 ```{r}
 
@@ -284,7 +281,8 @@ ggplot(pdata, aes(x = x, y = y)) +
 
 ```
 
-#### Analysis using tensor splines     
+#### Analysis using tensor splines
+
 ```{r}
 
 # test_mod2 <- gam(log_no3 ~ te(x, y, k = 20), data = dat2 %>% filter(year == 2019), method = "REML")
@@ -314,7 +312,7 @@ ggplot(pdata, aes(x = x, y = y)) +
 
 ```
 
-#### Analysis using adaptive splines    
+#### Analysis using adaptive splines
 
 ```{r}
 
@@ -346,11 +344,10 @@ ggplot(pdata, aes(x = x, y = y)) +
 
 ```
 
+### 3.03 Analysis over time, 10 years
 
+#### Test with just 10 years
 
-### 3.03 Analysis over time, 10 years     
-
-#### Test with just 10 years  
 ```{r}
 
 dat3 <- dat2 %>% filter(year >= 2010)
@@ -367,7 +364,8 @@ cat("R-sq =", summary(test_mod4)$r.sq, "\n")
 
 ```
 
-#### Visualise  
+#### Visualise
+
 ```{r}
 
 yrs <- c(2010, 2020)
@@ -397,7 +395,8 @@ ggplot(pdata_grid10yr, aes(x = x, y = y)) +
 
 ```
 
-#### Visualise difference   
+#### Visualise difference
+
 ```{r}
 
 pdata_diff <- pdata_grid10yr %>% filter(year == 2020)
@@ -410,10 +409,9 @@ ggplot(pdata_diff, aes(x = x, y = y)) +
 
 ```
 
-### 3.04 Analysis over time, all years  
+### 3.04 Analysis over time, all years
 
-#### Get saved GAM  
-
+#### Get saved GAM
 
 ```{r}
 
@@ -434,7 +432,8 @@ cat("R-sq =", summary(mod_spatial)$r.sq, "\n")
 
 ```
 
-#### Visualise  
+#### Visualise
+
 ```{r}
 
 # range(dat2$year)
@@ -489,9 +488,9 @@ ggplot(pdata_grid, aes(x = x, y = y)) +
 
 ```
 
-#### Development over time for arbitrary points     
+#### Development over time for arbitrary points
 
-* For some random points  
+-   For some random points
 
 ```{r}
 
@@ -529,12 +528,12 @@ ggplot(pdata_points, aes(year, log_no3_rel, group = point_no, color = factor(poi
 
 ```
 
+### 3.05 Development over time for selected stations
 
-### 3.05 Development over time for selected stations         
+-   For some random points
 
-* For some random points  
+#### Predicted vs actually observed
 
-#### Predicted vs actually observed  
 ```{r}
 
 # Pick data series lasting at least 2000-2020, but with some holes in them  
@@ -585,7 +584,8 @@ ggplot(pdata_sites, aes(year, log_no3)) +
 
 ```
 
-#### Model residuals using a simple GAM model  
+#### Model residuals using a simple GAM model
+
 ```{r}
 
 data_sites <- data_sites %>%
@@ -609,7 +609,8 @@ ggplot(data_sites, aes(year, log_no3_res)) +
 
 ```
 
-#### Predict residuals for a single site  
+#### Predict residuals for a single site
+
 ```{r}
 
 data_single_site <- data_sites %>% filter(site %in% sites[3])
@@ -631,7 +632,8 @@ ggplot(data_single_site, aes(year, log_no3_res)) +
 
 ```
 
-#### Predict residuals for all selected sites  
+#### Predict residuals for all selected sites
+
 ```{r}
 
 add_resid_est <- function(data){
@@ -667,7 +669,8 @@ ggplot(data_sites, aes(year, log_no3_res)) +
 
 ```
 
-#### Predict no3 for all selected sites, all years   
+#### Predict no3 for all selected sites, all years
+
 ```{r}
 
 pdata_sites2 <- pdata_sites %>% 
@@ -708,7 +711,8 @@ ggplot(pdata_sites2, aes(year, log_no3_obs)) +
 
 ```
 
-### 3.06 Test 'direct' gam (just one step)  
+### 3.06 Test 'direct' gam (just one step)
+
 ```{r}
 
 for (set_k in 4:5){
@@ -743,12 +747,11 @@ for (set_k in 4:5){
 
 ```
 
+### 3.07 For all/larger number of sites
 
-### 3.07 For all/larger number of sites   
+#### Get predictions
 
-#### Get predictions    
-
-* Entire procedure (except estimating the spatial GAM) 
+-   Entire procedure (except estimating the spatial GAM)
 
 ```{r}
 
@@ -842,13 +845,11 @@ ggplot(pdata_sites3, aes(year, log_no3_obs)) +
 
 ```
 
+### 3.08 Get average + SE for all pixels within country
 
+#### Testing terra
 
-### 3.08 Get average + SE for all pixels within country  
-
-#### Testing terra  
-
-* vect, rast and terra::extract  
+-   vect, rast and terra::extract
 
 ```{r}
 
@@ -941,8 +942,8 @@ if (FALSE){
 
 ```
 
+#### Make SpatRaster from spatial predictions
 
-#### Make SpatRaster from spatial predictions   
 ```{r}
 
 # head(pdata_grid, 4)
@@ -995,7 +996,6 @@ plot(change_rast)
 
 
 ```
-
 
 ```{r}
 
@@ -1050,9 +1050,7 @@ plot(border_pol)
 
 ```
 
-
-
-#### Extract values of the raster 'change_rast' that overlaps with the polygon 'v2'     
+#### Extract values of the raster 'change_rast' that overlaps with the polygon 'v2'
 
 ```{r}
 
@@ -1071,10 +1069,9 @@ mean(change_ex[,2], na.rm=TRUE)
   
 ```
 
+#### Plot pixels used
 
-#### Plot pixels used  
-
-* To test the procedure  
+-   To test the procedure
 
 ```{r}
 
@@ -1097,7 +1094,8 @@ plot(test_rast)
 
 ```
 
-### Plot only change inside the borders  
+### Plot only change inside the borders
+
 ```{r}
 
 # Also add 'values(test_rast)' ad column to 'pdata_grid_diff'  
@@ -1121,4 +1119,3 @@ ggplot(pdata_grid_diff %>%
 
 
 ```
-
