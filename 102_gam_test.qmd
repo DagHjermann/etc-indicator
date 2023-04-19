@@ -11,13 +11,13 @@ editor: visual
 
 ```{r, include=FALSE}
 
-# All of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
+# Many of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
 library(mgcv)
-library(dplyr)
-library(ggplot2)
-library(forcats)
-library(purrr)
-library(glue)        # easier than paste0
+library(dplyr)       # tidyverse 
+library(ggplot2)     # tidyverse
+library(forcats)     # tidyverse
+library(purrr)       # tidyverse
+library(glue)        # tidyverse, easier alternative to paste0
 library(tictoc)      # tic() and toc() for timing   
 library(terra)
 library(tidyr)       # pivot_wider()
@@ -45,16 +45,35 @@ dat <- readRDS("Input_data/WISE_GWNO3_sel2.rda") %>%
 
 ## 3. Test gam on country scale   
 
+
+### a. Select country  
+
 ```{r}
 
 dat2 <- dat %>% filter(countryCode == "PL")  
 dat2 <- dat %>% filter(countryCode == "FR")  
+dat2 <- dat %>% filter(countryCode %in% c("DE", "DK", "BE", "AT", "LI", "SI", "NL", "LU", "CH") )
+# LI = Lichtenstein, SI = Slovenia, LU = Luxenbourg
 
 country_bord <- country_borders %>% 
   filter(region == "France",
          is.na(subregion))
 
 ```
+
+### b. Plot overview of data for selected country/countries
+
+```{r}
+
+dat2 %>%
+  distinct(countryCode, waterbody, year) %>%
+  count(countryCode, year, name = "Number_of_waterbodies") %>%
+  ggplot(aes(year, countryCode, size = Number_of_waterbodies)) +
+  geom_point()
+
+
+```
+
 
 ### 3.01 Stats  
 
