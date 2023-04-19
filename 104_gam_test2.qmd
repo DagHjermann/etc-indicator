@@ -1,0 +1,1124 @@
+---
+title: "102_gam_test"
+format: 
+  html:
+    toc: true
+    code-fold: true  
+editor: visual
+---
+
+
+
+## 1. Packages  
+
+```{r, include=FALSE}
+
+# Many of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
+library(mgcv)
+library(dplyr)       # tidyverse 
+library(ggplot2)     # tidyverse
+library(forcats)     # tidyverse
+library(purrr)       # tidyverse
+library(glue)        # tidyverse, easier alternative to paste0
+library(tictoc)      # tic() and toc() for timing   
+library(terra)
+library(tidyr)       # pivot_wider()
+
+country_borders <- readRDS("Input_data/country_borders.rda")
+
+```
+
+```{r}
+
+knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk  
+
+```
+
+
+## 2. Data  
+
+```{r}
+
+dat <- readRDS("Input_data/WISE_GWNO3_sel2.rda") %>%
+  mutate(log_no3 = log10(no3))
+
+```
+
+
+## 3. Test gam on country scale   
+
+
+### Select country  
+
+```{r}
+
+#
+# Poland
+#
+dat2 <- dat %>% filter(countryCode == "PL")  
+
+# 
+# France
+#
+country_text <- "FR"
+countries <- strsplit(country_text, "-")[[1]]
+dat2 <- dat %>% filter(countryCode %in% countries)  
+
+# For maps  
+co <-  "France"
+country_borders_sel <- country_borders %>% 
+  filter(region %in% co,
+         is.na(subregion))
+
+# File name for saved GAM model
+fn_saved_gam <- "102_mod_fr_1.rds"
+
+if (FALSE){
+  
+  # Using several countries - wasn't really completed
+  
+  #
+  # Germany, Denmark, Benelux, Austria, Slovenia, CH  
+  #
+  
+  dir("Data", "103")
+  fn_saved_gam <- "103_DE-DK-BE-AT-LI-SI-NL-LU-CH_yr1990_k400.rds"
+  country_text <- "DE-DK-BE-AT-LI-SI-NL-LU-CH"
+  countries <- strsplit(country_text, "-")[[1]]
+  dat2 <- dat %>% filter(countryCode %in% countries)
+  # LI = Lichtenstein, SI = Slovenia, LU = Luxenbourg
+  
+  country_borders_sel <- country_borders %>% 
+    filter(
+      region %in% c("Germany", "Denmark", "Belgium", "Austria", "Lichtenstein",
+                    "Slovenia", "Netherlands", "Luxembourg", "Switzerland") &
+        is.na(subregion))
+  # For writing code and tesing
+  # grep("Neth", unique(country_borders$region), value = T)
+  # ggplot(country_borders_sel, aes(x,y, color = region)) + geom_point()
+  
+  #### Insert empty rows between countries in border data
+  empty_row <- data.frame(long=NA, lat=NA, group=NA, order=NA, region="", subregion="", x=NA, y=NA)
+  x1 <- purrr::map(co, ~rbind(country_borders_sel %>% filter(region == .x), empty_row))
+  country_borders_sel <- bind_rows(x1)
+  
+  
+}
+
+```
+
+#### Plot overview of data for selected country/countries
+
+```{r}
+
+dat2 %>%
+  distinct(countryCode, waterbody, year) %>%
+  count(countryCode, year, name = "Number_of_waterbodies") %>%
+  ggplot(aes(year, countryCode, size = Number_of_waterbodies)) +
+  geom_point()
+
+
+```
+### Map  
+```{r}
+
+if (countries == "FR"){
+  # CODE for France (a single country without islands)
+  # Polygon from scratch(modified from ?vect)
+  border_pol_data1 <- country_borders_sel[,c("x","y")] %>% as.matrix()
+  border_pol_data2 <-cbind(object=1, part=1, border_pol_data1, hole=0)
+  border_pol <- vect(border_pol_data2, "polygons")
+}
+
+if (FALSE){
+  
+# Experimental stuff
+# Polygon from scratch(modified from ?vect)
+country_borders_sel <- subset(country_borders, 
+                           region == "Austria" & is.na(subregion))
+border_pol_data1 <- country_borders_sel[,c("x","y")] %>% as.matrix()
+border_pol_data2 <- cbind(object=1, part=1, border_pol_data1, hole=0)
+border_pol <- vect(border_pol_data2, "polygons")
+plot(border_pol)
+
+# border_pol_ge <- border_pol
+# border_pol_at <- border_pol
+
+}
+
+```
+
+
+
+### 3.01 Stats  
+
+#### Number of points per year  
+```{r}
+
+df_no_sites_per_year <- dat2 %>%
+  distinct(countryCode, year, site) %>%
+  count(year)
+
+ggplot(df_no_sites_per_year, aes(year, n)) +
+  geom_point() + geom_line()
+  
+
+```
+#### Map by year  
+```{r}
+#| fig-height: 8
+#| fig-width: 7
+
+dat2 %>%
+  distinct(countryCode, x, y, year, site) %>%
+  ggplot(aes(x, y)) +
+  geom_point(size = rel(0.3)) + 
+  facet_wrap(vars(year))
+
+```
+
+
+#### Types of time series    
+
+```{r}
+
+df_timeseries <- dat2 %>%
+  distinct(countryCode, year, site, x, y) %>%
+  group_by(countryCode, site, x, y) %>%
+  summarize(
+    min_year = min(year),
+    max_year = max(year),
+    n_year = length(unique(year)), .groups = "drop"
+  ) %>%
+  mutate(
+    n_holes = max_year - min_year - n_year + 1
+  )
+
+df_timeseries_summ <- df_timeseries %>%
+  count(countryCode, min_year, max_year, n_year, n_holes, name = "Number_of_sites") %>%
+  arrange(desc(Number_of_sites)) %>%
+  mutate(
+    n_perc = Number_of_sites/sum(Number_of_sites)*100,
+    n_cum_perc = cumsum(n_perc)) 
+
+df_timeseries_summ %>% 
+  filter(n_cum_perc < 80) 
+
+```
+
+#### "Holey-ness" of time series    
+
+```{r}
+
+ggplot(df_timeseries_summ, aes(n_year, n_holes, size = Number_of_sites)) +
+  geom_point() +
+  labs(title = "All time series")
+
+ggplot(df_timeseries_summ %>% filter(max_year >= 2020), aes(n_year, n_holes, size = Number_of_sites)) +
+  geom_point() +
+  labs(title = "Last year >= 2020")
+
+```
+
+
+#### Spatial patterns for two years with most data    
+```{r}
+
+yrs <- df_no_sites_per_year %>%
+  arrange(desc(n)) %>%
+  pull(year) %>%
+  head(2)
+
+dat2 %>%
+  filter(year %in% yrs) %>%
+  ggplot(aes(x, y)) +
+  geom_point(aes(fill = no3, color = loq), pch = 21) +
+  scale_fill_viridis_c() +
+  scale_color_manual(values = c("black", "red")) +
+  facet_wrap(vars(year))
+
+dat2 %>%
+  filter(year %in% yrs) %>%
+  ggplot(aes(x, y)) +
+  geom_point(aes(fill = log_no3, color = loq), pch = 21) +
+  scale_fill_viridis_c() +
+  scale_color_manual(values = c("black", "red")) +
+  facet_wrap(vars(year))
+
+
+```
+
+### 3.02 Spatial GAM, single year(s)  
+
+* Different types of splines  
+* No big difference  
+
+#### Analysis using thin-plate splines  
+
+```{r}
+
+# test_mod1 <- gam(log_no3 ~ s(x, y, k = 200), data = dat2 %>% filter(year == 2019), method = "REML")  
+# saveRDS(test_mod1, "Data/102_test_mod1.rds")
+test_mod1 <- readRDS("Data/102_test_mod1.rds")
+
+cat("R-sq =", summary(test_mod1)$r.sq, "\n")  
+
+grid.x <- seq(min(dat2$x), max(dat2$x), by = 10)
+grid.y <- seq(min(dat2$y), max(dat2$y), by = 10)
+pdata <- expand.grid(x = grid.x, y = grid.y)
+
+# names(pdata) <- c("os_x","os_y")
+##predictions
+pdata <- transform(pdata, log_no3 = predict(test_mod1, pdata, type = "response"))
+
+ggplot(pdata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3)) +
+  scale_fill_viridis_c(limits = c(-2,2.5)) +
+  geom_point(
+    data = dat2 %>% filter(year %in% 2019), 
+    aes(color = log_no3)) +
+  annotate("path", x = country_borders_sel$x, y = country_borders_sel$y) +
+  scale_color_viridis_c(limits = c(-2,2.5))
+
+  
+
+```
+
+#### Analysis using tensor splines     
+```{r}
+
+# test_mod2 <- gam(log_no3 ~ te(x, y, k = 20), data = dat2 %>% filter(year == 2019), method = "REML")
+# saveRDS(test_mod2, "Data/102_test_mod2.rds")
+test_mod2 <- readRDS("Data/102_test_mod2.rds")
+
+cat("R-sq =", summary(test_mod2)$r.sq, "\n")    
+
+grid.x <- seq(min(dat2$x), max(dat2$x), by = 10)
+grid.y <- seq(min(dat2$y), max(dat2$y), by = 10)
+pdata <- expand.grid(x = grid.x, y = grid.y)
+
+# names(pdata) <- c("os_x","os_y")
+##predictions
+pdata <- transform(pdata, log_no3 = predict(test_mod2, pdata, type = "response"))
+
+ggplot(pdata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3)) +
+  scale_fill_viridis_c(limits = c(-2,2.5)) +
+  geom_point(
+    data = dat2 %>% filter(year %in% 2019), 
+    aes(color = log_no3)) +
+  annotate("path", x = country_borders_sel$x, y = country_borders_sel$y) +
+  scale_color_viridis_c(limits = c(-2,2.5))
+
+  
+
+```
+
+#### Analysis using adaptive splines    
+
+```{r}
+
+# parameters taken from ?smooth.construct.ad.smooth.spec
+
+# test_mod3 <- gam(log_no3 ~ s(x, y, bs = "ad", k = 15, m = 3), gamma = 1.4,
+#            data = dat2 %>% filter(year == 2019), method = "REML")
+# saveRDS(test_mod3, "Data/102_test_mod3.rds")
+test_mod3 <- readRDS("Data/102_test_mod3.rds")
+
+cat("R-sq =", summary(test_mod3)$r.sq, "\n")  
+
+grid.x <- seq(min(dat2$x), max(dat2$x), by = 10)
+grid.y <- seq(min(dat2$y), max(dat2$y), by = 10)
+pdata <- expand.grid(x = grid.x, y = grid.y)
+
+# names(pdata) <- c("os_x","os_y")
+##predictions
+pdata <- transform(pdata, log_no3 = predict(test_mod3, pdata, type = "response"))
+
+ggplot(pdata, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3)) +
+  scale_fill_viridis_c(limits = c(-2,2.5)) +
+  geom_point(
+    data = dat2 %>% filter(year %in% 2019), 
+    aes(color = log_no3)) +
+  annotate("path", x = country_borders_sel$x, y = country_borders_sel$y) +
+  scale_color_viridis_c(limits = c(-2,2.5))
+
+```
+
+
+
+### 3.03 Analysis over time, 10 years     
+
+#### Test with just 10 years  
+```{r}
+
+dat3 <- dat2 %>% filter(year >= 2010)
+# range(dat3$year)
+
+# Note: SLOW (ca 10 minutes?)
+# test_mod4 <- gam(log_no3 ~ s(x, y, year, k = 400), data = dat3, method = "REML")
+# saveRDS(test_mod4, "Data/102_test_mod4.rds")
+
+test_mod4 <- readRDS("Data/102_test_mod4.rds")
+
+cat("R-sq =", summary(test_mod4)$r.sq, "\n")  
+# 0.49!
+
+```
+
+#### Visualise  
+```{r}
+
+yrs <- c(2010, 2020)
+
+grid.x <- seq(min(dat2$x), max(dat2$x), by = 10)
+grid.y <- seq(min(dat2$y), max(dat2$y), by = 10)
+pdata_grid10yr <- expand.grid(x = grid.x, y = grid.y)  
+pdata_grid10yr <- bind_rows(
+  transform(pdata_grid10yr, year = yrs[1]),
+  transform(pdata_grid10yr, year = yrs[2])
+)
+
+# names(pdata_grid10yr) <- c("os_x","os_y")
+##predictions
+# Ca 25 seconds  
+pdata_grid10yr <- transform(pdata_grid10yr, log_no3 = predict(test_mod4, pdata_grid10yr, type = "response"))
+
+ggplot(pdata_grid10yr, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3)) +
+  scale_fill_viridis_c(limits = c(-2,2.5)) +
+  geom_point(
+    data = dat2 %>% filter(year %in% yrs), 
+    aes(color = log_no3)) +
+  scale_color_viridis_c(limits = c(-2,2.5)) +
+  annotate("path", x = country_borders_sel$x, y = country_borders_sel$y) +
+  facet_wrap(vars(year))
+
+```
+
+#### Visualise difference   
+```{r}
+
+pdata_diff <- pdata_grid10yr %>% filter(year == 2020)
+pdata_diff$log_no3 <- (pdata_grid10yr %>% filter(year == 2020) %>% pull(log_no3)) -
+ (pdata_grid10yr %>% filter(year == 2010) %>% pull(log_no3))
+
+ggplot(pdata_diff, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3)) +
+  scale_fill_viridis_c(limits = c(-2,2.5)) 
+
+```
+
+### 3.04 Analysis over time, all years  
+
+#### Get saved GAM  
+
+
+```{r}
+
+# Note: SLOW (ca 10 minutes?)
+# tictoc::tic()
+# mod_spatial <- gam(log_no3 ~ s(x, y, year, k = 600), data = dat2, method = "REML")
+# tictoc::toc()
+# 2767.81 sec elapsed
+# 2767/60 = 46 min
+
+# saveRDS(mod_spatial, "Data/102_mod_fr_1.rds")
+
+# For countries/model defined in the start of 3:
+mod_spatial <- readRDS(paste0("Data/", fn_saved_gam))
+
+cat("R-sq =", summary(mod_spatial)$r.sq, "\n")  
+
+
+```
+
+#### Visualise  
+```{r}
+
+# range(dat2$year)
+yrs <- c(1992, 2000, 2010, 2020)
+
+grid.x <- seq(min(dat2$x), max(dat2$x), by = 10)
+grid.y <- seq(min(dat2$y), max(dat2$y), by = 10)
+pdata_grid <- expand.grid(x = grid.x, y = grid.y)  
+pdata_grid <- bind_rows(
+  transform(pdata_grid, year = yrs[1]),
+  transform(pdata_grid, year = yrs[2]),
+  transform(pdata_grid, year = yrs[3]),
+  transform(pdata_grid, year = yrs[4])
+)
+
+# predictions
+# Ca 25 seconds  
+
+fn_saved_pred <- paste0(stringr::str_sub(fn_saved_gam, end =  -5), "_pred.rds")
+existing_filenames <- dir("Data", pattern = "_pred.rds")
+
+if (!fn_saved_pred %in% existing_filenames){
+  tic()
+  pred_list <- predict(mod_spatial, pdata_grid, type = "response", se.fit = TRUE)
+  pdata_grid <- transform(pdata_grid, log_no3 = pred_list$fit, log_no3_se = pred_list$se.fit)
+  toc()   # 68 seconds for 42000 rows  
+  saveRDS(pdata_grid, paste0("Data/", fn_saved_pred))
+}
+
+# pdata_grid <- readRDS("Data/102_pdata_grid_fr.rds")
+pdata_grid <- readRDS(paste0("Data/", fn_saved_pred))
+
+ggplot(pdata_grid, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3)) +
+  scale_fill_viridis_c(limits = c(-2,2.5)) +
+  annotate("path", x = country_borders_sel$x, y = country_borders_sel$y) +
+  facet_wrap(vars(year)) +
+  labs(title = "Prediction only")
+
+ggplot(pdata_grid, aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3)) +
+  scale_fill_viridis_c(limits = c(-2,2.5)) +
+  geom_point(
+    data = dat2 %>% filter(year %in% yrs), color = "black", size = rel(1.3)) +
+  geom_point(
+    data = dat2 %>% filter(year %in% yrs), 
+    aes(color = log_no3), size = rel(1)) +
+  scale_color_viridis_c(limits = c(-2,2.5)) +
+  annotate("path", x = country_borders_sel$x, y = country_borders_sel$y) +
+  facet_wrap(vars(year)) +
+  labs(title = "Prediction plus observations")
+
+```
+
+#### Development over time for arbitrary points     
+
+* For some random points  
+
+```{r}
+
+# For France:
+# x <- c(2000, 1875, 2125, 1750, 2000, 2250, 1750, 2000, 2250)  
+# y <- c(2125, 2000, 2000, 1800, 1800, 1800, 1500, 1500, 1500)
+
+data_rand <- sample_n(dat2, 9)  
+pdata_rand <- sample_n(pdata_grid, 9)
+x <- pdata_rand$x
+y <- pdata_rand$y
+point_no <- 1:9
+
+ggplot(country_borders_sel, aes(x,y)) +
+  geom_path() +
+  annotate("text", x=x, y=y, label = point_no)  
+
+pdata_points <- data.frame(x=x, y=y, point_no = point_no)  
+pdata_points <- 1992:2020 %>% map_dfr(~mutate(pdata_points, year = .))
+pdata_points <- transform(pdata_points, log_no3 = predict(mod_spatial, pdata_points, type = "response"))
+
+ggplot(pdata_points, aes(year, log_no3)) +
+  geom_line() +
+  facet_wrap(vars(point_no))
+
+# Relative to first point  
+pdata_points <- pdata_points %>%
+  group_by(point_no) %>%
+  mutate(log_no3_1 = first(log_no3),
+         log_no3_rel = log_no3 - log_no3_1)
+
+ggplot(pdata_points, aes(year, log_no3_rel, group = point_no, color = factor(point_no))) +
+  geom_line()
+
+
+```
+
+
+### 3.05 Development over time for selected stations         
+
+* For some random points  
+
+#### Predicted vs actually observed  
+```{r}
+
+# Pick data series lasting at least 2000-2020, but with some holes in them  
+df_timeseries %>%
+  filter(
+    max_year == 2020,
+    min_year <= 2000,
+    n_holes >= 5) %>% # View("sites")    # used this to pick some example series
+  ggplot(aes(x,y)) +
+  geom_path(data = country_borders_sel) +
+  geom_point() +
+  geom_text(aes(label = site), hjust = 0, nudge_x = 15, size = 3) +
+  labs(title = "All stations")
+
+#
+# Pick sites and start prediction data series
+#
+sites <- c("FR00103X0308-F3", "FR00436X0069-HY",  "FR07346X0013-HY", "FR04318X0017-HYAEP", "FR06477X0026-S")  
+data_sites <- dat2 %>%
+  filter(site %in% sites)
+pdata_sites <- data_sites %>%
+  count(countryCode, site, x, y)
+
+ggplot(pdata_sites, aes(x,y)) +
+  geom_path(data = country_borders_sel) +
+  geom_point() +
+  geom_text(aes(label = site), hjust = 0, nudge_x = 15, size = 3) +
+  labs(title = "Selected stations")
+
+#
+# Predict for all years  
+#
+pdata_sites <- 1992:2020 %>% map_dfr(~mutate(pdata_sites, year = .))
+# if (FALSE){
+tic()
+predicted <- predict(mod_spatial, pdata_sites, type = "response", se.fit = TRUE)
+#  saveRDS(predicted, "102_test_predict01.rds")
+toc()  # 7 seconds for 5 sites 
+# }
+#predicted <- readRDS("102_test_predict01.rds")
+pdata_sites <- transform(pdata_sites, log_no3 = predicted$fit, log_no3_se = predicted$se.fit)
+
+ggplot(pdata_sites, aes(year, log_no3)) +
+  geom_line() +
+  geom_point(data = data_sites) +
+  facet_wrap(vars(site)) +
+  labs(title = "Observed data (points) + predictions from spatial model")
+
+```
+
+#### Model residuals using a simple GAM model  
+```{r}
+
+data_sites <- data_sites %>%
+  left_join(
+    pdata_sites %>% select(site,year,log_no3,log_no3_se) %>% rename(log_no3_pred = log_no3),
+    by = c("site", "year")) %>%
+  mutate(
+    log_no3_res = log_no3 - log_no3_pred
+  )
+
+ggplot(data_sites, aes(year, log_no3)) +
+  geom_point() +
+  geom_point(aes(y = log_no3_pred), shape = 1) +
+  facet_wrap(vars(site)) +
+  labs(title = "Observed data (black dots) + predictions from spatial model (open dots)")
+
+ggplot(data_sites, aes(year, log_no3_res)) +
+  geom_point() +
+  facet_wrap(vars(site)) +
+  labs(title = "Residuals (observed data - predictions from spatial model)")
+
+```
+
+#### Predict residuals for a single site  
+```{r}
+
+data_single_site <- data_sites %>% filter(site %in% sites[3])
+mod_res_test <- gam(log_no3_res ~ s(year, k = 4), data = data_single_site)
+summary(mod_res_test)
+predicted <- predict(mod_res_test, se.fit = TRUE)
+data_single_site$log_no3_res_est <- predicted$fit
+data_single_site$log_no3_res_se <- predicted$se.fit
+
+ggplot(data_single_site, aes(year, log_no3_res)) +
+  geom_point() +
+  geom_point(aes(y = log_no3_res_est), shape = 5)
+
+ggplot(data_single_site, aes(year, log_no3_res)) +
+  geom_point() +
+  geom_pointrange(aes(y = log_no3_res_est, 
+                      ymin = log_no3_res_est - 2*log_no3_res_se, 
+                      ymax = log_no3_res_est + 2*log_no3_res_se), shape = 5)
+
+```
+
+#### Predict residuals for all selected sites  
+```{r}
+
+add_resid_est <- function(data){
+  sel <- !is.na(data$log_no3_res)
+  if (sum(sel) >= 9){
+    model_resid <- gam(log_no3_res ~ s(year, k = 4), data = data[sel,])
+  } else if (sum(sel) >= 7){
+    model_resid <- gam(log_no3_res ~ s(year, k = 3), data = data[sel,])
+  } else if (sum(sel) >= 5){
+    model_resid <- lm(log_no3_res ~ year, data = data[sel,])
+  } else if (sum(sel) <= 4){
+    model_resid <- lm(log_no3_res ~ 1, data = data[sel,])
+  }
+  predicted <- predict(model_resid, newdata = data, se.fit = TRUE)
+  # data$log_no3_res_est <- NA
+  # data$log_no3_res_se <- NA
+  # data$log_no3_res_est[sel] <- predicted$fit
+  # data$log_no3_res_se[sel] <- predicted$se.fit
+  data$log_no3_res_est <- predicted$fit
+  data$log_no3_res_se <- predicted$se.fit
+  data
+}
+
+data_sites <- data_sites %>% split(.$site) %>% map_dfr(add_resid_est)
+
+ggplot(data_sites, aes(year, log_no3_res)) +
+  geom_point() +
+  geom_pointrange(aes(y = log_no3_res_est,
+                      ymin = log_no3_res_est - 2*log_no3_res_se,
+                      ymax = log_no3_res_est + 2*log_no3_res_se), shape = 5) +
+  facet_wrap(vars(site)) +
+  labs(title = "Residuals (dots) + residuals predicted from simple gam (diamonds + lines)")
+
+```
+
+#### Predict no3 for all selected sites, all years   
+```{r}
+
+pdata_sites2 <- pdata_sites %>% 
+  rename(
+    log_no3_pred1 = log_no3,
+    log_no3_se1 = log_no3_se) %>%
+  left_join(data_sites %>% select(site, year, log_no3) %>% rename(log_no3_obs = log_no3)) %>%
+  mutate(log_no3_res = log_no3_obs - log_no3_pred1) %>%
+  split(.$site) %>%
+  map_dfr(add_resid_est) %>%
+  mutate(
+    log_no3_pred2 = log_no3_pred1 + log_no3_res_est,
+    log_no3_se2 = sqrt(log_no3_se1^2 + log_no3_res_se^2)
+  )
+
+# Plot version 1
+ggplot(pdata_sites2, aes(year, log_no3_obs)) +
+  geom_pointrange(aes(y = log_no3_pred2,
+                      ymin = log_no3_pred2 - 2*log_no3_se2,
+                      ymax = log_no3_pred2 + 2*log_no3_se2), shape = 5) +
+  geom_point(color = "red2") +
+  facet_wrap(vars(site)) +
+  labs(title = "NO3, observed (dots) and predicted from spatial model + residual model (diamonds + lines)")
+
+# Plot version 2
+ggplot(pdata_sites2, aes(year, log_no3_obs)) +
+  geom_ribbon(
+    aes(ymin = log_no3_pred2 - 2*log_no3_se2,
+        ymax = log_no3_pred2 + 2*log_no3_se2), fill = "lightblue") +
+  geom_line(aes(y = log_no3_pred2)) +
+  geom_line(aes(y = log_no3_pred1), color = "green3") +
+  geom_point(color = "red2") +
+  facet_wrap(vars(site)) +
+  labs(
+    title = "NO3, observed (dots) and predicted",
+    subtitle = "Predicted from spatial model + residual model (ribbon) and spatial model alone (green line)")
+
+
+```
+
+### 3.06 Test 'direct' gam (just one step)  
+```{r}
+
+for (set_k in 4:5){
+  
+  model_list <- sites %>%
+    set_names() %>%
+    map(~gam(log_no3 ~ s(year, k = set_k), data = dat2 %>% filter(site == .x)))  
+  predicted_list <- model_list %>% 
+    map(~predict(.x, newdata = data.frame(year = 1992:2020), se.fit = TRUE))  
+  pdata_direct <- predicted_list %>% 
+    map_dfr(
+      ~data.frame(
+        year = 1992:2020, 
+        log_no3_pred= .x$fit,
+        log_no3_se = .x$se.fit), .id = "site")
+  
+  gg <- ggplot(pdata_direct, aes(year)) +
+    geom_ribbon(
+      aes(ymin = log_no3_pred - 2*log_no3_se,
+          ymax = log_no3_pred + 2*log_no3_se), fill = "lightblue") +
+    geom_line(aes(y = log_no3_pred)) +
+    geom_point(data = dat2 %>% filter(site %in% sites), aes(y = log_no3), color = "red2") +
+    facet_wrap(vars(site)) +
+    labs(
+      title = "NO3, observed (dots) and predicted from GAM model (ribbon)",
+      subtitle = glue("log_no3 ~ s(year, k = {set_k})"))
+  
+  print(gg)
+  
+}
+
+
+```
+
+
+### 3.07 For all/larger number of sites   
+
+#### Get predictions    
+
+* Entire procedure (except estimating the spatial GAM) 
+
+```{r}
+
+# Note:
+#   We have separated pdata_sites into pdata_sites1 and pdata_sites2  
+#   and the 'old' pdata_sites2 ihas been renamed 'pdata_sites3'    
+
+#
+# Pick sites and start prediction data series
+#
+data_sites <- dat2
+pdata_sites1 <- data_sites %>%
+  count(countryCode, site, x, y) %>%
+  filter(n >= 2) %>%
+  head(16)   # For testing with just 16 sites; remove to run it for all sites  
+cat("Number of sites:", nrow(pdata_sites1), "\n")
+# 1926 rows
+
+
+cat("\nNumber of years per site:\n")
+table(pdata_sites1$n)
+cat("\n\n")
+
+#
+# Predict no3 for all years using spatial model    
+# - log_no3_pred1 and log_no3_se1
+#
+years <- 1992:2020
+cat("Total number of years:", length(years), "\n")
+pdata_sites2 <- years %>% map_dfr(~mutate(pdata_sites1, year = .)) 
+cat("[Number of sites] x [total number of years]:", nrow(pdata_sites2), "\n")
+
+if (TRUE){
+  cat("Calculate predictions from spatial GAM\n")
+  tic()
+  predicted <- predict(mod_spatial, pdata_sites2, type = "response", se.fit = TRUE)
+  toc()  # 203 seconds for 78000 rows   
+  saveRDS(predicted, "Data/102_mod_fr_1_pred1.rds")
+}
+
+predicted <- readRDS("Data/102_mod_fr_1_pred1.rds")  
+
+pdata_sites2 <- transform(pdata_sites2, 
+                         log_no3_pred1 = predicted$fit, 
+                         log_no3_se1 = predicted$se.fit)
+
+# 2.2 million rows  
+
+#
+# Get residuals
+# Model residuals and add predicted residuals (using 'add_resid_est')  
+# - log_no3_res_est and log_no3_res_se  
+# Combine to add   
+# - log_no3_pred1 and log_no3_se1
+# 
+
+if (FALSE){
+  
+  cat("Estimate GAM for residuals and add to predictions from spatial GAM\n")
+  tic()
+  pdata_sites3 <- pdata_sites2 %>% 
+    left_join(data_sites %>% select(site, year, log_no3) %>% rename(log_no3_obs = log_no3), 
+              by = c("site", "year")) %>%
+    mutate(log_no3_res = log_no3_obs - log_no3_pred1) %>%
+    split(.$site) %>%
+    map_dfr(add_resid_est) %>%
+    mutate(
+      log_no3_pred2 = log_no3_pred1 + log_no3_res_est,
+      log_no3_se2 = sqrt(log_no3_se1^2 + log_no3_res_se^2)
+    )
+  toc()  # 203 seconds for 78000 rows   
+  saveRDS(pdata_sites3, "Data/102_mod_fr_1_pred2.rds")
+  
+}
+
+pdata_sites3 <- readRDS("Data/102_mod_fr_1_pred2.rds")
+
+# Plot version 2
+ggplot(pdata_sites3, aes(year, log_no3_obs)) +
+  geom_ribbon(
+    aes(ymin = log_no3_pred2 - 2*log_no3_se2,
+        ymax = log_no3_pred2 + 2*log_no3_se2), fill = "lightblue") +
+  geom_line(aes(y = log_no3_pred2)) +
+  geom_line(aes(y = log_no3_pred1), color = "green3") +
+  geom_point(color = "red2") +
+  facet_wrap(vars(site)) +
+  labs(
+    title = "NO3, observed (dots) and predicted",
+    subtitle = "Predicted from spatial model + residual model (ribbon) and spatial model alone (green line)")
+
+
+```
+
+
+
+### 3.08 Get average + SE for all pixels within country  
+
+#### Testing terra  
+
+* vect, rast and terra::extract  
+
+```{r}
+
+if (FALSE){
+  
+  # Test
+  
+  # statistics using terra package  
+  # zonal() is only for raster vs raster
+  # extract() is for raster vs vector (e.g. polygon)
+  
+  # library(terra)
+  
+  ## extract with a polygon
+  f <- system.file("ex/lux.shp", package="terra")
+  v <- vect(f)          # results in class 'SpatVector' [package "terra"]   
+  # str(v, 1)       
+  
+  v <- v[1:2,]
+  plot(v)
+  
+  # 
+  # 1. Make raster from 'v'
+  #
+  z <- rast(v, resolution=.1, names="test")
+  values(z) <- 1:ncell(z)      # class 'SpatRaster' [package "terra"] with 1 slot
+  # str(z, 1)  
+  plot(z)
+  lines(v)
+  
+  # Extract values of the raster 'z' that overlaps with each of the two polygons 'v'   
+  e <- terra::extract(z, v)
+  
+  # All values  
+  e
+  # Mean value  
+  tapply(e[,2], e[,1], mean, na.rm=TRUE)
+  
+  # Do the same thing directly using 'fun'    
+  terra::extract(z, v, fun = "mean")
+  
+  #
+  # 2. Make raster and polygon from scratch
+  #
+  # a. Get coordinates  
+  ze <- ext(z)
+  xs <- seq(ze@ptr$vector[1], ze@ptr$vector[2], length = 6)
+  x <- (head(xs, -1) + tail(xs,-1))/2
+  ys <- seq(ze@ptr$vector[3], ze@ptr$vector[4], length = 5)
+  y <- (head(ys, -1) + tail(ys,-1))/2
+  
+  # b. Create data frame - note row sorting (using arrange)  
+  df_midpoints <- expand.grid(x = x, y = y)  %>%
+    arrange(desc(y), x)
+  plot(z)
+  points(df_midpoints)
+  df_midpoints$value <- 1:20
+  ggplot(df_midpoints, aes(x,y,fill=value)) + geom_raster()  + coord_fixed()
+  
+  # Create raster from extent    
+  z2 <- rast(ncol=5, nrow=4, 
+             xmin = ze@ptr$vector[1], xmax = ze@ptr$vector[2], 
+             ymin = ze@ptr$vector[3], ymax = ze@ptr$vector[4]) 
+  values(z2) <- 1:20 
+  
+  # Polygon from scratch(modified from ?vect)
+  v2_data1 <- rbind(c(5.85, 49.9), c(6,50.1), c(6.2,49.9), c(5.9,49.8))
+  v2_data2 <-cbind(object=1, part=1, v2_data1, hole=0)
+  v2 <- vect(v2_data2, "polygons")
+  
+  # Plot both
+  plot(z2)
+  lines(v2)
+  
+  # Extract values of the raster 'z' that overlaps with each of the two polygons 'v'   
+  e <- terra::extract(z2, v2)
+  
+  # All values  
+  e
+  # Mean value  
+  tapply(e[,2], e[,1], mean, na.rm=TRUE)
+  
+  # Do the same thing directly using 'fun'    
+  terra::extract(z2, v2, fun = "mean")
+  
+
+}
+
+
+
+```
+
+
+#### Make SpatRaster from spatial predictions   
+```{r}
+
+# head(pdata_grid, 4)
+
+# Test data: change 1992-2020 (point estimate)     
+pdata_grid_diff <- pdata_grid %>%
+  select(-log_no3_se) %>%
+  filter(year %in% c(1992,2020)) %>% # View()
+  pivot_wider(names_from = year, values_from = log_no3) %>% # View()
+  mutate(log_no3_change = `2020` - `1992`)
+
+# Test plot: change in NO3
+ggplot(pdata_grid_diff, aes(x = x, y = y)) +
+  geom_raster(aes(fill = cut(log_no3_change, breaks = 20))) +
+  scale_fill_manual(values = rev(hcl.colors(20, "terrain"))) +
+  coord_fixed()
+
+#
+# Make SpatRaster
+#
+dx <- 10
+dy <- 10
+extent <- c(
+  min(pdata_grid$x) - dx/2, 
+  max(pdata_grid$x) + dx/2, 
+  min(pdata_grid$y) - dy/2, 
+  max(pdata_grid$y) + dy/2)
+
+change_rast <- rast(ncol = length(unique(pdata_grid$x)), 
+           nrow = length(unique(pdata_grid$y)), 
+           xmin = extent[1], xmax = extent[2], 
+           ymin = extent[3], ymax = extent[4]) 
+dim(change_rast)
+dim(change_rast)[1]*dim(change_rast)[2]
+
+#
+# Get values for the SpatRaster (change in NO3, as above)  
+# Note how we sort the rows, this is important     
+#
+raster_vals <- pdata_grid_diff %>%
+  arrange(desc(y), x) %>%
+  pull(log_no3_change) %>%
+  as.numeric()    # this is apparently needed!
+
+length(raster_vals)
+values(change_rast) <- raster_vals
+
+# Test plot 2  
+plot(change_rast)
+
+
+```
+
+
+```{r}
+
+#### Make vector data for the countries  
+# NOT USED - tried this for a collection of countries  
+
+if (FALSE){
+
+#
+#  Make a spatial object for all countries 
+# 
+
+get_linelist_country <- function(country, data){
+# get_linelist_country <- function(){
+  df <- data %>% 
+    filter(region == country) %>%
+    mutate(subregion = addNA(subregion))
+  # subregions <- df %>% 
+  #  pull(subregion) %>%
+  #  unique()
+  df_list <- df %>%
+    split(.$subregion) 
+  df_list <- map(df_list, ~.x[,c("x","y")])
+  # map(subregions, ~df[df$subregion == .x, c("x","y")])
+  map(df_list, Line)
+}
+
+# debugonce(get_linelist_country)
+line_list1 <- get_linelist_country("Denmark", country_borders)
+line_list2 <- get_linelist_country("Germany", country_borders)
+line_list <- c(line_list1, line_list2)
+
+line_list_country <- co %>% map(get_linelist_country, data = country_borders)
+line_list <- line_list_country[[1]]
+for (i in 2:length(line_list_country))
+  line_list <- c(line_list, line_list_country[[i]])
+  
+# head(test[[1]])
+
+# line_list <- map(border_pol_data1, Line)
+lines <- Lines(line_list, ID = "border")
+SL = SpatialLines(list(lines))
+border_pol <- vect(SL, "polygons")
+
+plot(border_pol)
+
+# m <- do.call(bind, border_pol) 
+# border_pol <- aggregate(border_pol)
+# plot(border_pol)
+
+}
+
+```
+
+
+
+#### Extract values of the raster 'change_rast' that overlaps with the polygon 'v2'     
+
+```{r}
+
+change_ex <- terra::extract(change_rast, border_pol)
+
+# All values  
+# change_ex
+# Mean value  
+# tapply(change_ex[,2], change_ex[,1], mean, na.rm=TRUE)
+
+# Mean value for this special case when there is only one polygon:
+mean(change_ex[,2], na.rm=TRUE)
+
+# Do the same thing directly using 'fun'    
+# terra::extract(change_rast, border_pol, fun = "mean")
+  
+```
+
+
+#### Plot pixels used  
+
+* To test the procedure  
+
+```{r}
+
+test_rast <- change_rast
+
+# Give the raster cells unique values, values 1-10593
+test_vals1 <- 1:length(values(test_rast))
+values(test_rast) <- test_vals1
+
+# Pick values inside shape  
+test_ex <- terra::extract(test_rast, border_pol)
+test_vals2 <- test_ex[,2]
+
+# Set new values: value 1 for values (test_vals1) that were inside shape (test_vals2), 0 otherwise   
+values(test_rast) <- ifelse(test_vals1 %in% test_vals2, 1, 0)
+
+# Plot
+plot(test_rast)
+
+
+```
+
+### Plot only change inside the borders  
+```{r}
+
+# Also add 'values(test_rast)' ad column to 'pdata_grid_diff'  
+pdata_grid_diff <- pdata_grid_diff %>%
+  arrange(desc(y), x) %>%
+  mutate(inside = values(test_rast),
+         log_no3_change = ifelse(inside == 1, log_no3_change, NA))
+
+# Test plot: change in NO3
+
+range(pdata_grid_diff$log_no3_change, na.rm = TRUE)
+
+ggplot(pdata_grid_diff %>% 
+         mutate(log_no3_change_c = cut(log_no3_change, breaks = seq(-1.5,1.5,by = 0.25))),
+       aes(x = x, y = y)) +
+  geom_raster(aes(fill = log_no3_change_c)) +
+  scale_fill_brewer("Change, log(NO3)", palette = "RdBu", direction = -1) +
+  annotate("path", x = country_borders_sel$x, y = country_borders_sel$y) +
+  coord_fixed()  +
+  theme_bw()
+
+
+```
+
