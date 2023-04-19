@@ -2,20 +2,23 @@
 title: "101_gam_data"
 format: 
   html:
-    toc_
+    toc: true
+    code-fold: true  
 editor: visual
 ---
 
-* Reading data and doing some filtering  
-    - Selected and renamed variables   
-    - Data given as <loq and value >2.5 filtered out   
-    - Added x,y as geographic reference for positon in km (based on https://epsg.io/3034)   
+-   Reading data and doing some filtering
 
-* Saves data as "Input_data/WISE_GWNO3_sel2.rda   
+    -   Selected and renamed variables\
+    -   Data given as <loq and value >2.5 filtered out\
+    -   Added x,y as geographic reference for positon in km (based on https://epsg.io/3034)
 
-* Some exploratory plots and tables   
+-   Saves data as "Input_data/WISE_GWNO3_sel2.rda
 
-## 1. Packages  
+-   Some exploratory plots and tables
+
+## 1. Packages
+
 ```{r, include=FALSE}
 
 # All of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
@@ -34,10 +37,10 @@ country_borders <- map_data("world")
 
 ```
 
+## 2. Read data
 
-## 2. Read data  
+### Read raw data
 
-### Read raw data  
 ```{r}
 
 if (FALSE){
@@ -55,7 +58,8 @@ if (FALSE){
 
 ```
 
-### Read data aggregated by waterbody   
+### Read data aggregated by waterbody
+
 ```{r}
 
 if (FALSE){
@@ -73,10 +77,10 @@ if (FALSE){
 
 ```
 
+### Filter data for OK measurements (resultMeanValue)
 
+-   Also sets NO3 data to numeric etc.\
 
-### Filter data for OK measurements (resultMeanValue)    
-* Also sets NO3 data to numeric etc.   
 ```{r}
 
 # Need only to do this once (therefore wrapped in FALSE)
@@ -155,16 +159,17 @@ if (FALSE){
 
 ```
 
-### Read site data for analysis  
+### Read site data for analysis
+
 ```{r}
 
 dat_01a <- readRDS("Data/WISE_GWNO3_sel.rda")
 
 ```
 
-### Add data aggregated by waterbody  
+### Add data aggregated by waterbody
 
-* Only used where the water body has no site data  
+-   Only used where the water body has no site data
 
 ```{r}
 
@@ -219,9 +224,8 @@ nrow(dat_01b)
 
 ```
 
+### Filter values under loq and with value \> 2.5
 
-
-### Filter values under loq and with value > 2.5    
 ```{r}
 
 check <- dat_01b %>%
@@ -253,11 +257,10 @@ nrow(dat_02)
 
 ```
 
+### Filter by geographic spread
 
-### Filter by geographic spread     
+#### Map
 
-
-#### Map  
 ```{r}
 
 dat_02 %>%
@@ -270,9 +273,9 @@ dat_02 %>%
 
 ```
 
-#### Filter  
+#### Filter
 
-* Europe only  
+-   Europe only
 
 ```{r}
 
@@ -281,10 +284,9 @@ dat <- dat_02 %>%
   
 ```
 
+### Add transformed coordinates
 
-### Add transformed coordinates  
-
-* Unit meters
+-   Unit meters
 
 ```{r}
 
@@ -331,7 +333,9 @@ dat %>%
   labs(title = "Coordinates in km from lat 27, lon-15")
 
 ```
-### Also transform 'country_borders'  
+
+### Also transform 'country_borders'
+
 ```{r}
 
 if (FALSE){
@@ -353,17 +357,18 @@ if (FALSE){
 
 ```
 
-## 3. Save filtered data  
+## 3. Save filtered data
+
 ```{r}
 
 saveRDS(dat, "Input_data/WISE_GWNO3_sel2.rda")
 
 ```
 
+## 4. Data patterns
 
-## 4. Data patterns   
+### Number of sites per country
 
-### Number of sites per country  
 ```{r}
 
 dat1 <- dat %>%
@@ -393,7 +398,8 @@ gg + scale_x_log10() + scale_y_log10()
 
 ```
 
-### Number of sites per country per year  
+### Number of sites per country per year
+
 ```{r}
 
 sel_countries <- head(dat1$countryCode, 16)
@@ -410,8 +416,7 @@ dat %>%
 
 ```
 
-
-#### Example of country data   
+#### Example of country data
 
 ```{r}
 
@@ -425,7 +430,9 @@ dat %>%
 
 
 ```
-#### Types of time series   
+
+#### Types of time series
+
 ```{r}
 
 dat_summ <- dat %>%
@@ -443,12 +450,12 @@ dat_summ <- dat %>%
   mutate(n_cum_perc = cumsum(n_perc))
 
 dat_summ %>% 
-  filter(n_cum_perc < 80)
+  filter(n_cum_perc < 80)  
 
 ```
 
+### Number of sites and waterbodies
 
-### Number of sites and waterbodies 
 ```{r}
 
 dat %>%
@@ -465,9 +472,10 @@ dat %>%
 
 ```
 
-### Length of time covered vs. number of years     
+### Length of time covered vs. number of years
 
-#### All data  
+#### All data
+
 ```{r}
 
 dat %>%
@@ -482,7 +490,8 @@ dat %>%
 
 ```
 
-#### All data  
+#### All data
+
 ```{r}
 
 dat %>%
@@ -497,8 +506,8 @@ dat %>%
 
 ```
 
+### Countries
 
-### Countries   
 ```{r}
 
 dat %>%
@@ -515,9 +524,10 @@ dat %>%
 
 ```
 
-### Geographic spread     
+### Geographic spread
 
-#### By decade    
+#### By decade
+
 ```{r}
 
 
@@ -538,7 +548,8 @@ dat %>%
 
 ```
 
-### Interactive map  
+### Interactive map
+
 ```{r}
 
 library(leaflet)  
@@ -577,4 +588,3 @@ leaflet() %>%
 # HR, BA, RS, ME, XK, MK, AL, BG, RO, EL (Greece)
 # LT, LV, EE (1990), FI 
 ```
-
