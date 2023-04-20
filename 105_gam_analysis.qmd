@@ -1,0 +1,816 @@
+---
+title: "104_gam_test"
+format: 
+  html:
+    toc: true
+    code-fold: true  
+editor: visual
+---
+
+-   Use model s(x,y) + s(year)  
+-   Try using data for all Europe  
+-   Use [soap-film smoother](https://fromthebottomoftheheap.net/2016/03/27/soap-film-smoothers/) for the spatial effect  
+
+```{r}
+
+knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk  
+
+```
+
+## 1. Packages
+
+```{r, include=FALSE}
+
+# Many of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
+library(mgcv)
+library(dplyr)       # tidyverse 
+library(ggplot2)     # tidyverse
+library(viridis)     # for scale_color_viridis  
+library(forcats)     # tidyverse
+library(purrr)       # tidyverse
+library(glue)        # tidyverse, easier alternative to paste0
+library(tictoc)      # tic() and toc() for timing   
+library(terra)       # spatial functions  
+
+country_borders <- readRDS("Input_data/country_borders.rda")
+
+```
+
+```{r}
+
+knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk  
+
+```
+
+## 2. Data
+
+```{r}
+
+dat <- readRDS("Input_data/WISE_GWNO3_sel2.rda") %>%
+  mutate(log_no3 = log10(no3))
+
+```
+
+
+## 3. Test GAM with soap-film smoother  
+
+### Test 1: example from GAM help pages      
+
+* Example from ?soap 
+
+```{r}
+
+
+##########################
+## simple test function...
+##########################
+
+fsb <- list(fs.boundary())
+nmax <- 100
+
+## create some internal knots...
+knots <- data.frame(v=rep(seq(-.5,3,by=.5),4),
+                    w=rep(c(-.6,-.3,.3,.6),rep(8,4)))
+
+## Simulate some fitting data, inside boundary...
+set.seed(0)
+n <- 600
+v <- runif(n)*5-1;w<-runif(n)*2-1
+y <- fs.test(v,w,b=1)
+names(fsb[[1]]) <- c("v","w")
+ind <- inSide(fsb,x=v,y=w) ## remove outsiders
+y <- y + rnorm(n)*.3 ## add noise
+y <- y[ind];v <- v[ind]; w <- w[ind] 
+n <- length(y)
+
+par(mfrow=c(3,2))
+## plot boundary only
+plot(fsb[[1]]$v,fsb[[1]]$w,type="l")
+
+## plot boundary with knot and data locations
+plot(fsb[[1]]$v,fsb[[1]]$w,type="l")
+points(knots, pch=20, col=2)
+points(v,w,pch=".");
+
+## Now fit the soap film smoother. 'k' is dimension of boundary smooth.
+## boundary supplied in 'xt', and knots in 'knots'...
+ 
+nmax <- 100 ## reduced from default for speed.
+# str(v, 1)
+# str(w, 1)
+# str(y, 1)
+# str(fsb, 2)
+# str(knots, 1)
+b <- gam(y ~ s(v, w, k=30, bs="so", 
+               xt = list(bnd = fsb, nmax=nmax)), 
+         knots=knots)
+
+plot(b) ## default plot
+plot(b,scheme=1)
+plot(b,scheme=2)
+plot(b,scheme=3)
+
+vis.gam(b,plot.type="contour")
+
+
+```
+
+### Test 2: More realistic    
+
+* Example from soap() but setting the knots using Gavin's method      
+* https://fromthebottomoftheheap.net/2016/03/27/soap-film-smoothers/  
+
+```{r}
+#| results: hold
+
+#
+# Boundary
+#
+cat("------------ fs.boundary() ------------ \n")
+fs.boundary() %>% str(1)
+
+# Make fsb (list of lists)
+fsb <- list(fs.boundary())
+
+# Change names, in order to fit with data  
+names(fsb[[1]]) <- c("v","w")
+cat("\n------------ fsb ------------ \n")
+fsb %>% str(2)
+
+## plot boundary only
+plot(fsb[[1]]$v, fsb[[1]]$w, type="l")
+mtext("Boundary")
+
+#
+# Simulate some fitting data, inside boundary...
+#
+
+# Locations
+set.seed(1)
+n <- 600
+v <- runif(n)*5-1; w <- runif(n)*2-1
+plot(v, w)
+mtext("Data locations")
+
+# Data (without noise)
+y <- fs.test(v, w, b=1)
+
+# Plot data
+dat_test1 <- data.frame(v=v, w=w, y=y)
+ggplot(dat_test1, aes(v, w, color = y)) +
+  geom_point() +
+  scale_color_viridis(na.value = "red")  +
+  ggtitle("Data, before removing outsiders")
+
+
+# For removing outsiders  
+ind <- inSide(fsb, x=v, y=w) 
+str(ind)
+
+## add noise
+y <- y + rnorm(n)*.3 
+
+# remove outsiders
+y <- y[ind]; v <- v[ind]; w <- w[ind] 
+n <- length(y)
+
+#
+# Plot data again
+#
+dat_test2 <- data.frame(v=v, w=w, y=y)
+ggplot(dat_test2, aes(v, w, color = y)) +
+  geom_point() +
+  scale_color_viridis(na.value = "red")  +
+  ggtitle("Data, after removing outsiders")
+
+#
+# Create knots following Gavin  
+#
+N <- 10
+gx <- seq(min(v), max(v), len = N)
+gy <- seq(min(w), max(w), len = N) + 0.1  # add 0.1 in order to have fewer points on the border
+# set.seed(1)
+# gx <- runif(N)*5-1; gy <- runif(N)*2-1
+gp <- expand.grid(gx, gy)
+names(gp) <- c("x","y")
+
+# Check our "raw" knots
+ggplot(gp, aes(x, y)) +
+  geom_point() +
+  ggtitle("Knots, raw")
+
+# Use inSide() to weed out knots  
+
+# This doesn't work - x and y must be vectors with the names used
+#   in 'fsb' (!)
+# sel <- inSide(fsb, x=gp$x, y=gp$y)
+# This works - x and y must be vectors with the names used
+v <- gp$x
+w <- gp$y
+sel <- inSide(fsb, x=v, y=w) 
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l")
+points(v, w, col = "grey50")
+text(v[sel], w[sel], 1:sum(sel), col = "blue2")
+mtext("Knots, before manual weeding")
+
+# Make data frame for knots and start testing the GAM
+# - manual weeding must take place, rinse and repeat until the GAM works  
+knots <- data.frame(v = v[sel], w = w[sel])
+# After error in the gam: "knot 1 is on or outside boundary", add:
+knots <- knots[-1,]
+# After error "knot 25 is on or outside boundary", add:
+knots <- knots[-25,]
+# Etc. - remove points one by one until
+# Note that you also can get th error message:
+#    Error in soap.basis(sd, x, y, film = TRUE, wiggly = TRUE, penalty = TRUE) : 
+#    NA/NaN/Inf in foreign function call (arg 13)
+# but it still is handled the same way, but find the knot number by examining the plot below
+knots <- knots[-60,]
+knots <- knots[-16,]
+knots <- knots[-32,]
+knots <- knots[-49,]
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l")
+points(knots$v, knots$w, col = "grey50")
+text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+mtext("Knots used in analysis")
+
+# GAM - dimension of the PDE solution grid
+nmax <- 100 
+
+# GAM with soap smoother
+cat("\n=====================  Input for the GAM ===================== \n")
+cat("Note that the names 'v' and 'w' must be the same for 3 objects: dat_test2, fsb and knots \n")
+cat("\n------------ dat_test2 ------------ \n")
+str(dat_test2, 1)
+cat("\n------------ fsb ------------ \n")
+str(fsb, 2)
+cat("\n------------ knots ------------ \n")
+str(knots, 1)
+mod <- gam(y ~ s(v, w, k=30, bs="so", 
+               xt = list(bnd = fsb, nmax=nmax)),
+         data = dat_test2,
+         knots=knots)
+
+plot(mod) ## default plot
+
+
+```
+
+
+
+### Test 3: prediction   
+
+```{r}
+
+grid.v <- seq(min(fsb[[1]]$v), max(fsb[[1]]$v), length = 40)
+grid.w <- seq(min(fsb[[1]]$w), max(fsb[[1]]$w), length = 40)
+pdata <- expand.grid(v = grid.v, w = grid.w)
+pdata2 <- transform(pdata[, 1:2], y = predict(mod, newdata = pdata))
+
+# head(pdata2)
+
+ggplot(pdata2, aes(v, w, color = y)) +
+  geom_point() +
+  scale_color_viridis(na.value = "red")  +
+  ggtitle("Predicted y")
+
+```
+
+## 4. Map data for land    
+
+* Europe, land, from Natural Earth website  
+* Cropping data, parly manually to 
+```{r}
+
+# help(package = "terra")
+
+# SpatVector from file
+f <- "ne_50m_land/ne_50m_land.shp"
+f <- "ne_110m_land/ne_110m_land.shp"
+boundary_land_all <- vect(f)
+# plot(boundary_land_all)
+
+# crop with an extent
+ex <- ext(-10, 50, 30, 73)
+boundary_land <- crop(boundary_land_all, ex)
+plot(boundary_land, main = "Original map (Mercator)")  
+
+# Project to ETRS89  
+crs_ETRS89_extended <- "+proj=lcc +lat_0=52 +lon_0=10 +lat_1=35 +lat_2=65 +x_0=4000000 +y_0=2800000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"
+boundary_land2 <- project(boundary_land, crs_ETRS89_extended)
+plot(boundary_land2, main = "Map in ETRS89 projection")  
+
+# Get coordinates  
+boundary_coord <- crds(boundary_land2, df = TRUE)
+names(boundary_coord) <- c("x_orig", "y_orig")
+
+# Define x, y as km from lat = 27 & lon = -15
+
+# Get the transformed coordinates for lat = 27 & lon = -15  
+longitude <- c(-116.7, -120.4, -116.7, -113.5, -115.5, -120.8, -119.5, -113.7, -113.7, -110.7)
+latitude <- c(45.3, 42.6, 38.9, 42.1, 35.7, 38.9, 36.2, 39, 41.6, 36.9)
+lonlat <- cbind(-15, 27)
+crs_longlat <- "+proj=longlat +datum=WGS84"
+origo_point <- vect(lonlat, crs=crs_longlat)
+origo_point_t <- project(origo_point, crs_ETRS89_extended)
+origo_coord <- crds(origo_point_t)
+
+# Define x, y 
+boundary_coord$x <- (boundary_coord$x_orig - origo_coord[1,"x"])/1000
+boundary_coord$y <- (boundary_coord$y_orig - origo_coord[1,"y"])/1000
+
+# Test plots
+if (FALSE){
+  plot(y~x, data = boundary_coord)
+  
+  # IMPORTANT:
+  # For selectiong points for boundary_coord2 and boundary_coord3
+  plot(y~x, data = boundary_coord, type = "n")
+  with(boundary_coord, text(x, y, 1:nrow(boundary_coord), col = "blue2", cex = 0.75))
+}
+
+# Europe with islands (points removed)
+boundary_coord2 <- boundary_coord[-c(114:183, 499:503, 568:585, 587:591, 592:593),]
+if (FALSE){
+  plot(y~x, data = boundary_coord2, type = "n")
+  with(boundary_coord2, text(x, y, 1:nrow(boundary_coord2), col = "blue2", cex = 0.75))
+}
+
+# Europe without islands (points along main coastline kept)
+boundary_coord3 <- boundary_coord[c(187:567, 586, 187),]
+
+if (FALSE){
+  plot(y~x, data = boundary_coord3, type = "n")
+  with(boundary_coord3, text(x, y, 1:nrow(boundary_coord3), col = "blue2", cex = 0.75))
+}
+
+plot(y~x, data = boundary_coord3, type = "l") 
+mtext("Map with ETRS89 in km, single simplified polygon")
+
+# saveRDS(boundary_coord3, "Data/104_boundary_coord3.rds")
+
+```
+
+
+## 5. Test GAM for one year, selected area    
+
+### Select data  
+```{r}
+
+# 
+# Scandinavia + the Baltics  
+#
+country_text <- "NO-SE-FI-EE-LV-LT"
+countries <- strsplit(country_text, "-")[[1]]
+dat2 <- dat %>% filter(countryCode %in% countries)  
+
+dat3 <- dat2 %>% filter(year %in% 2020)  
+
+# plot(y~x, data = boundary_coord3, type = "l")  
+# points(y~x, dat3)
+
+ggplot(dat3, aes(x,y)) +
+  geom_point(aes(color = log_no3)) +
+  scale_color_viridis() +
+  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  coord_fixed()  +
+  theme_bw()
+
+
+```
+###  Boundary  
+
+```{r}
+
+# Make fsb (list of lists)
+fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
+
+## plot boundary only
+# plot(fsb[[1]]$v, fsb[[1]]$w, type="l")
+# mtext("Boundary")
+
+```
+### Remove outsiders from data  
+
+```{r}
+
+v <- dat3$x
+w <- dat3$y
+y <- dat3$log_no3
+  
+# For removing outsiders  
+ind <- inSide(fsb, x=v, y=w) 
+cat(round(100*mean(ind), 1), "% of the data are inside the polygon \n")
+
+# remove outsiders
+y <- y[ind]; v <- v[ind]; w <- w[ind] 
+n <- length(y)
+
+dat3_for_gam <- data.frame(v=v, w=w, y=y)
+
+```
+
+###  Create knots   
+
+```{r}
+
+#
+# Create knots following Gavin  
+#
+N <- 10
+gx <- seq(min(v), max(v), len = N)
+gy <- seq(min(w), max(w), len = N) + 0.1  # add 0.1 in order to have fewer points on the border
+# set.seed(1)
+# gx <- runif(N)*5-1; gy <- runif(N)*2-1
+gp <- expand.grid(gx, gy)
+names(gp) <- c("x","y")
+
+if (FALSE){
+  # Check our "raw" knots
+  ggplot(gp, aes(x, y)) +
+    geom_point() +
+    ggtitle("Knots, raw")
+}
+
+# Use inSide() to weed out knots  
+
+# This works - x and y must be vectors with the names used
+v <- gp$x
+w <- gp$y
+sel <- inSide(fsb, x=v, y=w) 
+
+#if (FALSE){
+  plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+  points(v, w, col = "grey50")
+  text(v[sel], w[sel], 1:sum(sel), col = "blue2")
+  mtext("Knots, before manual weeding")
+#}
+
+```
+
+### Adjust knots and run GAM  
+
+```{r}
+
+# Make data frame for knots and start testing the GAM
+# - manual weeding must take place, rinse and repeat until the GAM works  
+knots <- data.frame(v = v[sel], w = w[sel])
+# After error in the gam: "knot 25 is on or outside boundary", add:
+knots <- knots[-1,]
+knots <- knots[-1,]
+knots <- knots[-11,]
+knots <- knots[-13,]
+knots <- knots[-19,]
+knots <- knots[-25,]
+knots <- knots[-25,]
+knots <- knots[-29,]
+knots <- knots[-36,]
+knots <- knots[-41,]
+knots <- knots[-44,]
+knots <- knots[-44,]
+knots <- knots[-51,]
+knots <- knots[-55,]
+
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+points(knots$v, knots$w, col = "grey50")
+text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+mtext("Knots used in analysis")
+
+
+# GAM - dimension of the PDE solution grid
+nmax <- 100 
+
+# GAM with soap smoother
+# Note that the names 'v' and 'w' must be the same for 3 objects: dat_test2, fsb and knots  
+mod <- gam(y ~ s(v, w, k=30, bs="so", 
+               xt = list(bnd = fsb, nmax=nmax)),
+         data = dat3_for_gam,
+         knots=knots)
+
+plot(mod) ## default plot
+
+```
+
+
+
+## 6. Test GAM for one year, all areas    
+
+### Select data  
+```{r}
+
+dat2 <- dat
+
+dat3 <- dat2 %>% filter(year %in% 2020)  
+
+# plot(y~x, data = boundary_coord3, type = "l")  
+# points(y~x, dat3)
+
+ggplot(dat3, aes(x,y)) +
+  geom_point(aes(color = log_no3)) +
+  scale_color_viridis() +
+  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  coord_fixed()  +
+  theme_bw()
+
+
+```
+###  Boundary  
+
+```{r}
+
+# Make fsb (list of lists)
+fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
+
+## plot boundary only
+# plot(fsb[[1]]$v, fsb[[1]]$w, type="l")
+# mtext("Boundary")
+
+```
+
+### Remove outsiders from data  
+
+```{r}
+
+v <- dat3$x
+w <- dat3$y
+y <- dat3$log_no3
+  
+# For removing outsiders  
+ind <- inSide(fsb, x=v, y=w) 
+cat(round(100*mean(ind), 1), "% of the data are inside the polygon \n")
+
+# remove outsiders
+y <- y[ind]; v <- v[ind]; w <- w[ind] 
+n <- length(y)
+
+dat3_for_gam <- data.frame(v=v, w=w, y=y)
+
+ggplot(dat3_for_gam, aes(v,w)) +
+  geom_point(aes(color = y)) +
+  scale_color_viridis() +
+  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  coord_fixed()  +
+  theme_bw()
+
+```
+
+###  Create knots   
+
+```{r}
+
+#
+# Create knots following Gavin  
+#
+N <- 15
+gx <- seq(min(v), max(v), len = N)
+gy <- seq(min(w), max(w), len = N) + 0.1  # add 0.1 in order to have fewer points on the border
+# set.seed(1)
+# gx <- runif(N)*5-1; gy <- runif(N)*2-1
+gp <- expand.grid(gx, gy)
+names(gp) <- c("x","y")
+
+if (FALSE){
+# Check our "raw" knots
+ggplot(gp, aes(x, y)) +
+  geom_point() +
+  ggtitle("Knots, raw")
+}
+
+# Use inSide() to weed out knots  
+
+# This works - x and y must be vectors with the names used
+v <- gp$x
+w <- gp$y
+sel <- inSide(fsb, x=v, y=w) 
+
+#if (FALSE){
+  plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+  points(v, w, col = "grey50")
+  text(v[sel], w[sel], 1:sum(sel), col = "blue2")
+  mtext("Knots, before manual weeding")
+#}
+
+```
+
+### Adjust knots and run GAM  
+
+* Rinse and repeat analysis in order to remove knots that stil are outside land  
+* As it needs to be run again and again, set k = 30 in the GAM until the knots are rinsed  
+
+```{r}
+
+# Make data frame for knots and start testing the GAM
+# - manual weeding must take place, rinse and repeat until the GAM works  
+knots <- data.frame(v = v[sel], w = w[sel])
+
+# After error in the gam: "knot 4 is on or outside boundary", add:
+# After error in the gam: "knot 4 is on or outside boundary", add:
+knots <- knots[-4,]
+knots <- knots[-5,]
+knots <- knots[-10,]
+knots <- knots[-11,]
+knots <- knots[-32,]
+knots <- knots[-53,]
+knots <- knots[-73,]
+knots <- knots[-80,]
+knots <- knots[-88,]
+
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+points(knots$v, knots$w, col = "grey50")
+text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+mtext("Knots used in analysis")
+
+
+# GAM - dimension of the PDE solution grid
+nmax <- 100 
+
+# GAM with soap smoother
+# Note that the names 'v' and 'w' must be the same for 3 objects: dat_test2, fsb and knots  
+mod <- gam(y ~ s(v, w, k=200, bs="so", 
+               xt = list(bnd = fsb, nmax=nmax)),
+         data = dat3_for_gam,
+         knots=knots)
+
+plot(mod) ## default plot
+
+```
+
+
+
+## 7. GAM for all years, all areas    
+
+### Select data  
+```{r}
+
+dat2 <- dat
+
+dat3 <- dat2  
+
+# plot(y~x, data = boundary_coord3, type = "l")  
+# points(y~x, dat3)
+
+ggplot(dat3, aes(x,y)) +
+  geom_point(aes(color = log_no3)) +
+  scale_color_viridis() +
+  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  coord_fixed()  +
+  theme_bw()
+
+
+```
+###  Boundary  
+
+```{r}
+
+# NOTE: Code as above  
+
+# Make fsb (list of lists)
+fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
+
+## plot boundary only
+# plot(fsb[[1]]$v, fsb[[1]]$w, type="l")
+# mtext("Boundary")
+
+```
+
+### Remove outsiders from data  
+
+```{r}
+
+# NOTE: Code as above  
+
+v <- dat3$x
+w <- dat3$y
+y <- dat3$log_no3
+  
+# For removing outsiders  
+ind <- inSide(fsb, x=v, y=w) 
+cat(round(100*mean(ind), 1), "% of the data are inside the polygon \n")
+
+# remove outsiders
+y <- y[ind]; v <- v[ind]; w <- w[ind] 
+n <- length(y)
+
+# Add year as wll  
+dat3_for_gam <- data.frame(v=v, w=w, y=y, year = dat3$year[ind])
+
+ggplot(dat3_for_gam, aes(v,w)) +
+  geom_point(aes(color = y)) +
+  scale_color_viridis() +
+  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  coord_fixed()  +
+  theme_bw()
+
+```
+
+###  Create knots   
+
+```{r}
+
+# NOTE: Code as above  
+
+#
+# Create knots following Gavin  
+#
+N <- 15
+gx <- seq(min(v), max(v), len = N)
+gy <- seq(min(w), max(w), len = N) + 0.1  # add 0.1 in order to have fewer points on the border
+# set.seed(1)
+# gx <- runif(N)*5-1; gy <- runif(N)*2-1
+gp <- expand.grid(gx, gy)
+names(gp) <- c("x","y")
+
+if (FALSE){
+# Check our "raw" knots
+ggplot(gp, aes(x, y)) +
+  geom_point() +
+  ggtitle("Knots, raw")
+}
+
+# Use inSide() to weed out knots  
+
+# This works - x and y must be vectors with the names used
+v <- gp$x
+w <- gp$y
+sel <- inSide(fsb, x=v, y=w) 
+
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+points(v, w, col = "grey50")
+text(v[sel], w[sel], 1:sum(sel), col = "blue2")
+mtext("Knots, before manual weeding")
+
+
+```
+
+### Adjust knots and run GAM  
+
+* Rinse and repeat analysis in order to remove knots that stil are outside land  
+* As it needs to be run again and again, set k = 30 in the GAM until the knots are rinsed  
+
+```{r}
+
+# NOTE: Code as above, including knots adjustment  
+
+# Make data frame for knots and start testing the GAM
+# - manual weeding must take place, rinse and repeat until the GAM works  
+knots <- data.frame(v = v[sel], w = w[sel])
+
+# After error in the gam: "knot 4 is on or outside boundary", add:
+# After error in the gam: "knot 4 is on or outside boundary", add:
+knots <- knots[-1,]
+knots <- knots[-4,]
+knots <- knots[-11,]
+knots <- knots[-11,]
+knots <- knots[-12,]
+knots <- knots[-21,]
+knots <- knots[-44,]
+knots <- knots[-54,]
+knots <- knots[-102,]
+knots <- knots[-106,]
+# knots <- knots[-73,]
+# knots <- knots[-80,]
+# knots <- knots[-88,]
+
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+points(knots$v, knots$w, col = "grey50")
+text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+mtext("Knots used in analysis")
+
+
+# GAM - dimension of the PDE solution grid
+nmax <- 100 
+
+# GAM with soap smoother
+# Ca. 2 minutes with k = 200  
+# Note that the names 'v' and 'w' must be the same for 3 objects: dat_test2, fsb and knots  
+mod <- gam(y ~ s(v, w, k=200, bs="so", 
+               xt = list(bnd = fsb, nmax=nmax)),
+         data = dat3_for_gam,
+         knots=knots)
+
+plot(mod) ## default plot
+
+```
+
+### With year effect  
+```{r}
+
+if (FALSE){
+  tic()
+  nmax = 500
+  mod2 <- gam(y ~ s(v, w, k=500, bs="so", 
+                    xt = list(bnd = fsb, nmax=nmax)) + s(year, k = 5),
+              data = dat3_for_gam,
+              knots=knots)
+  toc()   # 89 sec with nmax = 500 and k = 500  
+  
+  saveRDS(mod2, "Data/104_mod2.rds")
+}
+
+mod2 <- readRDS("Data/104_mod2.rds")
+
+plot(mod2) ## default plot
+
+
+```
+
