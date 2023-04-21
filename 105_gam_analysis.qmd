@@ -11,11 +11,6 @@ editor: visual
 -   Try using data for all Europe  
 -   Use [soap-film smoother](https://fromthebottomoftheheap.net/2016/03/27/soap-film-smoothers/) for the spatial effect  
 
-```{r}
-
-knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk  
-
-```
 
 ## 1. Packages
 
@@ -48,6 +43,9 @@ knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk
 
 dat <- readRDS("Input_data/WISE_GWNO3_sel2.rda") %>%
   mutate(log_no3 = log10(no3))
+
+boundary_coord3 <- readRDS("Data/104_boundary_coord3.rds")
+
 
 ```
 

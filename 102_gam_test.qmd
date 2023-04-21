@@ -948,7 +948,9 @@ if (FALSE){
 
 # head(pdata_grid, 4)
 
-# Test data: change 1992-2020 (point estimate)     
+# Test data: predictions of change 1992-2020 (point estimate)
+#   'pdata_grid' is a data frame with x, y, year, log_no3 and log_no3_se
+#   Make columns '1992' and '2020', and takes the difference 
 pdata_grid_diff <- pdata_grid %>%
   select(-log_no3_se) %>%
   filter(year %in% c(1992,2020)) %>% # View()
@@ -964,6 +966,8 @@ ggplot(pdata_grid_diff, aes(x = x, y = y)) +
 #
 # Make SpatRaster
 #
+
+# Make extent (vector of 4 values)  
 dx <- 10
 dy <- 10
 extent <- c(
@@ -972,15 +976,18 @@ extent <- c(
   min(pdata_grid$y) - dy/2, 
   max(pdata_grid$y) + dy/2)
 
-change_rast <- rast(ncol = length(unique(pdata_grid$x)), 
-           nrow = length(unique(pdata_grid$y)), 
-           xmin = extent[1], xmax = extent[2], 
-           ymin = extent[3], ymax = extent[4]) 
+# Make empty SpatRaster using 'terra::rast'
+change_rast <- rast(
+  ncol = length(unique(pdata_grid$x)), 
+  nrow = length(unique(pdata_grid$y)), 
+  xmin = extent[1], xmax = extent[2], 
+  ymin = extent[3], ymax = extent[4]) 
+
 dim(change_rast)
 dim(change_rast)[1]*dim(change_rast)[2]
 
 #
-# Get values for the SpatRaster (change in NO3, as above)  
+# Get values for filling into the SpatRaster (change in NO3, as above)  
 # Note how we sort the rows, this is important     
 #
 raster_vals <- pdata_grid_diff %>%
@@ -989,6 +996,8 @@ raster_vals <- pdata_grid_diff %>%
   as.numeric()    # this is apparently needed!
 
 length(raster_vals)
+
+# Set values of the SpatRaster
 values(change_rast) <- raster_vals
 
 # Test plot 2  
@@ -1054,6 +1063,12 @@ plot(border_pol)
 
 ```{r}
 
+# 'change_rast' is a StapRaster
+# 'border_pol' is a SpatVector(polygon)
+#
+# the result 'change_ex' is a 5049-row data frame with 2 columns:  
+# - 'ID' (values are only 1, since 'border_pol' has only one polygon)
+# - 'lyr.1' (values of 'change_rast')  
 change_ex <- terra::extract(change_rast, border_pol)
 
 # All values  
@@ -1075,21 +1090,23 @@ mean(change_ex[,2], na.rm=TRUE)
 
 ```{r}
 
-test_rast <- change_rast
+# This raster should have the sane size as change_rast (but we will change the values)
+inside_polygon_rast <- change_rast
 
 # Give the raster cells unique values, values 1-10593
-test_vals1 <- 1:length(values(test_rast))
-values(test_rast) <- test_vals1
+rast_vals1 <- 1:length(values(inside_polygon_rast))
+values(inside_polygon_rast) <- rast_vals1
 
 # Pick values inside shape  
-test_ex <- terra::extract(test_rast, border_pol)
-test_vals2 <- test_ex[,2]
+# The result has a selection (5049 values) of the values 1-10593 
+values_extracted <- terra::extract(inside_polygon_rast, border_pol)
+rast_vals2 <- values_extracted[,2]
 
-# Set new values: value 1 for values (test_vals1) that were inside shape (test_vals2), 0 otherwise   
-values(test_rast) <- ifelse(test_vals1 %in% test_vals2, 1, 0)
+# Set new values: value 1 for values (rast_vals1) that were inside shape (rast_vals2), 0 otherwise   
+values(inside_polygon_rast) <- ifelse(rast_vals1 %in% rast_vals2, 1, 0)
 
 # Plot
-plot(test_rast)
+plot(inside_polygon_rast)
 
 
 ```
@@ -1098,7 +1115,7 @@ plot(test_rast)
 
 ```{r}
 
-# Also add 'values(test_rast)' ad column to 'pdata_grid_diff'  
+# Also add 'values(test_rast)'  column to 'pdata_grid_diff'  
 pdata_grid_diff <- pdata_grid_diff %>%
   arrange(desc(y), x) %>%
   mutate(inside = values(test_rast),
