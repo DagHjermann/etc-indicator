@@ -257,7 +257,7 @@ nrow(dat_02)
 
 ```
 
-### Filter by geographic spread
+### Filter by year and geographic spread
 
 #### Map
 
@@ -275,12 +275,14 @@ dat_02 %>%
 
 #### Filter
 
--   Europe only
+- Europe only  
+- Data from 1992 onwards only  
 
 ```{r}
 
 dat <- dat_02 %>%
-  filter(lat > 27 & lon > -15)
+  filter(lat > 27 & lon > -15,
+         year >= 1992)
   
 ```
 
