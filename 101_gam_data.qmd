@@ -786,23 +786,31 @@ cat("Number of sites in group 3b ('include because close to others'):", nrow(dat
 
 
 
-## 3. Save filtered data 
+## 6. Save filtered data 
 
 ```{r}
 
 dat_selected <- bind_rows(
-  dat_sites_group1 %>% mutate(Sitegroup = 1),
-  dat_sites_group2 %>% mutate(Sitegroup = 2),
-  dat_sites_group3b %>% mutate(Sitegroup = 3)
+  dat %>% filter(site %in% dat_sites_group1$site) %>% mutate(Sitegroup = 1),
+  dat %>% filter(site %in% dat_sites_group2$site) %>% mutate(Sitegroup = 2),
+  dat %>% filter(site %in% dat_sites_group3b$site) %>% mutate(Sitegroup = 3)
 )
 
+dat_sites <- bind_rows(
+  dat_sites_group1 %>% mutate(Sitegroup = "1"),
+  dat_sites_group2 %>% mutate(Sitegroup = "2"),
+  dat_sites_group3a %>% mutate(Sitegroup = "3a"),
+  dat_sites_group3b %>% mutate(Sitegroup = "3b")
+  )
+
 saveRDS(dat_selected, "Input_data/WISE_GWNO3_sel3.rda")
+saveRDS(dat_sites, "Input_data/WISE_GWNO3_sel3_sites.rda")
 
 ```
 
 
 
-### Interactive map
+## 7. Interactive map
 
 ```{r}
 
