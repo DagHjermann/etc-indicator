@@ -1,0 +1,1005 @@
+---
+title: "106_gam_ordinary_spatial"
+format: 
+  html:
+    toc: true
+    code-fold: true  
+editor: visual
+---
+
+-   Use model s(x,y) + s(year)\
+-   Use ordinary spatial thin-plate smooth, i.e. default version of s(x,y) instead of soap-film smoother
+-   Using data for all Europe
+
+## 1. Packages
+
+```{r, include=FALSE}
+
+# Many of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
+library(mgcv)
+library(dplyr)       # tidyverse 
+library(ggplot2)     # tidyverse
+library(viridis)     # for scale_color_viridis  
+library(forcats)     # tidyverse
+library(purrr)       # tidyverse
+library(glue)        # tidyverse, easier alternative to paste0
+library(tictoc)      # tic() and toc() for timing   
+library(terra)       # spatial functions  
+
+country_borders <- readRDS("Input_data/country_borders.rda")
+
+```
+
+```{r}
+
+knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk  
+
+```
+
+## 2. Data
+
+```{r}
+
+dat <- readRDS("Input_data/WISE_GWNO3_sel2.rda") %>%
+  filter(year >= 1992) %>%
+  mutate(log_no3 = log10(no3))
+
+```
+
+## 3. Map data for land
+
+### Europe, land, from Natural Earth website
+
+```{r}
+
+# help(package = "terra")
+
+# SpatVector from file
+f <- "ne_50m_land/ne_50m_land.shp"
+# f <- "ne_110m_land/ne_110m_land.shp"
+boundary_land_all <- vect(f)
+
+
+# crop with an extent
+ex <- ext(-10, 50, 30, 73)
+boundary_land <- crop(boundary_land_all, ex)
+plot(boundary_land, main = "Original map (Mercator)")  
+
+
+
+```
+
+### Project to ETRS89
+
+```{r}
+
+# Project to ETRS89  
+crs_ETRS89_extended <- "+proj=lcc +lat_0=52 +lon_0=10 +lat_1=35 +lat_2=65 +x_0=4000000 +y_0=2800000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"
+boundary_land2 <- project(boundary_land, crs_ETRS89_extended)
+plot(boundary_land2, main = "Map in ETRS89 projection")  
+
+```
+
+## 4. Map using data fram R's 'world' data
+
+-   See script 101
+
+### Select countries
+
+```{r}
+
+regions <- c("Portugal", "Iceland", "Ireland", "Spain", "UK",
+             "Isle of Man", "Guernsey", "Jersey", "Andorra", "France", "Belgium", 
+             "Netherlands", "Luxembourg", "Monaco", "Switzerland", "Liechtenstein", 
+             "Denmark", "Germany", "Italy", "San Marino", "Norway", 
+             "Vatican", "Austria", "Slovenia", "Sweden", "Czech Republic", 
+             "Malta", "Croatia", "Poland", "Bosnia and Herzegovina", "Slovakia", 
+             "Hungary", "Finland", "Montenegro", "Albania", "Serbia", "Kosovo", 
+             "Lithuania", "Estonia", "Latvia", "North Macedonia", "Romania", 
+             "Greece", "Belarus", "Bulgaria", "Moldova", "Ukraine", "Cyprus", 
+             "Turkey")
+
+country_borders <- readRDS("Input_data/country_borders.rda") %>%
+  filter(region %in% regions & !subregion %in% c("Svalbard", "Jan Mayen")) 
+
+# ggplot(country_borders %>% filter(region == "France"), aes(x,y)) +
+#   geom_path(aes(group = subregion))  
+
+ggplot(country_borders, aes(x,y)) +
+  geom_path(aes(group = group))  
+
+# ALTERNATIVE: use data from Natueral Earth web site  
+# borders_all <- vect("ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp")
+# # Choose data based on "regions" vactor as defined above  
+# borders_european <- borders_all[borders_all$SOVEREIGNT %in% regions,]
+# plot(borders_european)
+
+```
+
+#### For making 'countries' vector above
+
+```{r}
+
+if (FALSE){
+  country_borders %>% 
+    filter(is.na(subregion)) %>%
+    group_by(region) %>%
+    summarise(across(c(x,y), mean)) %>%
+    filter(x > 0 & x < 5000 & y > 0 & y < 10000) %>%
+    ggplot(aes(x,y)) +
+    # geom_point() +
+    geom_text(aes(label = region))
+  
+  country_borders %>% 
+    filter(is.na(subregion)) %>%
+    group_by(region) %>%
+    summarise(across(c(x,y), mean)) %>%
+    filter(x > 0 & x < 5000 & y > 0 & y < 10000) %>%
+    arrange(x) %>%
+    pull(region) %>%
+    dput()
+}
+
+
+
+```
+
+### Make vector object
+
+```{r}
+
+
+
+```
+
+### Show data
+
+```{r}
+
+ggplot(dat, aes(x,y)) +
+  geom_point(aes(color = log_no3)) +
+  scale_color_viridis() +
+  annotate("path", x = country_borders$x, y = country_borders$y, group = country_borders$group) +
+  coord_fixed()  +
+  theme_bw()
+
+```
+
+## 5. Data to use for predictions
+
+### Spatial grid before filtering, as data frame
+
+```{r}
+
+dx <- 50
+dy <- 50
+x_min <- dx*round(min(dat$x)/dx)
+x_max <- dx*round(max(dat$x)/dx)
+y_min <- dy*round(min(dat$y)/dy)
+y_max <- dy*round(max(dat$y)/dy)
+grid.x <- seq(x_min, x_max, by = dx)
+grid.y <- seq(y_min, y_max, by = dy)
+full_grid <- expand.grid(x = grid.x, y = grid.y)  
+
+full_grid <- full_grid %>%
+  # Add index (will be used for selecting data within country borders)
+  mutate(i = 1:nrow(full_grid)) %>%
+  # Sort rows - important, this is the same order as when we extract values from a raster object
+  arrange(desc(y), x)
+
+ggplot(full_grid, aes(x,y)) + 
+  geom_point(aes(color = i)) +
+  annotate("path", 
+           x = country_borders$x, 
+           y = country_borders$y, 
+           group = country_borders$group,
+           color = "red") +
+  coord_fixed()
+
+
+```
+
+### Convert data frame to raster
+
+```{r}
+
+# Make extent (vector of 4 values)  
+extent <- c(
+  min(full_grid$x) - dx/2, 
+  max(full_grid$x) + dx/2, 
+  min(full_grid$y) - dy/2, 
+  max(full_grid$y) + dy/2)
+
+# Make empty SpatRaster using 'terra::rast'
+full_raster <- rast(
+  ncol = length(unique(full_grid$x)), 
+  nrow = length(unique(full_grid$y)), 
+  xmin = extent[1], xmax = extent[2], 
+  ymin = extent[3], ymax = extent[4]) 
+
+# Set values of the SpatRaster
+values(full_raster) <- full_grid$i
+
+plot(full_raster)
+
+```
+
+### Select raster cells for a single country (example)
+
+```{r}
+
+borderdata <- subset(country_borders, region == "Switzerland")
+border_pol_data1 <- borderdata[,c("x","y")] %>% 
+  as.matrix()
+border_pol_data2 <-cbind(object=1, part=1, border_pol_data1, hole=0)
+border_pol <- vect(border_pol_data2, "polygons")
+
+# Extract values of the raster 'z' that overlaps with each of the two polygons 'v'   
+selected_i_values <- terra::extract(full_raster, border_pol)
+
+if (FALSE){
+  
+  # plot
+  ggplot(full_grid %>% filter(i %in% selected_i_values$lyr.1), aes(x,y)) + 
+    geom_point() +
+    annotate("path", x = country_borders$x, y = country_borders$y, group = country_borders$group,
+             color = "red")
+}
+
+  
+```
+
+### Function for selecting raster cells for a single area (example)
+
+```{r}
+
+get_rasterdata_within_border <- function(borderdata, raster_data){
+  
+  border_pol_data1 <- borderdata[,c("x","y")] %>% 
+    as.matrix()
+  border_pol_data2 <-cbind(object=1, part=1, border_pol_data1, hole=0)
+  border_pol <- vect(border_pol_data2, "polygons")
+
+  # Extract values of the raster 'z' that overlaps with each of the two polygons 'v'   
+  terra::extract(raster_data, border_pol)
+  
+}
+
+if (FALSE){
+  
+  # test
+  
+  i <- country_borders %>%
+    filter(region == "Switzerland") %>%
+    get_rasterdata_within_border(raster_data = full_raster)
+  
+  ggplot(full_grid %>% filter(i %in% selected_i_values$lyr.1), aes(x,y)) + 
+    geom_point() +
+    annotate("path", x = country_borders$x, y = country_borders$y, group = country_borders$group,
+             color = "red")
+  
+}
+  
+```
+
+### Select spatial points based on borders
+
+```{r}
+
+selected_i_values <- country_borders %>%
+  split(.$group) %>%
+  map_df(get_rasterdata_within_border, raster_data = full_raster)
+
+pdata_space <- full_grid %>% 
+  filter(i %in% selected_i_values$lyr.1)
+
+ggplot(pdata_space, aes(x,y)) + 
+  geom_point() +
+  annotate("path", 
+           x = country_borders$x, 
+           y = country_borders$y, 
+           group = country_borders$group,
+           color = "red") +
+  coord_fixed()
+
+```
+
+### Spatial grid, downsampled if necessary
+
+-   Not necessary! (so downsample has been set to false)
+
+```{r}
+
+# If you want to downsample the spatial grid  
+downsample <- TRUE
+downsample <- FALSE
+
+if (downsample){
+  
+  by = 4
+  
+  # Use a regular grid in space (e.g. every 4th point)
+  xs <- unique(pdata_space$x) %>% sort()
+  xs <- xs[seq(1,length(xs), by = by)]
+  ys <- unique(pdata_space$y) %>% sort()
+  ys <- ys[seq(1,length(ys), by = by)]
+  
+  pdata_space_s <- pdata_space %>%
+    filter(x %in% xs & y %in% ys)
+
+} else {
+  
+  pdata_space_s <- pdata_space
+  
+}
+
+```
+
+### Add years
+
+```{r}
+
+pdata <- pdata_space_s %>% mutate(year = 1992)
+
+for (yr in 1993:2020){
+  pdata <- bind_rows(pdata,
+                     pdata_space_s %>% mutate(year = yr)
+  )
+  
+}
+
+nrow(pdata)
+
+
+```
+
+## 5. GAM, additive effects of space and time
+
+### Additive space and year effects
+
+```{r}
+
+
+if (FALSE){
+  tic()
+  mod2 <- gam(log_no3 ~ s(x, y, k=200) + s(year, k = 5),
+              data = dat)
+  toc()   # 96 sec for k = 200  
+  
+  saveRDS(mod2, "Data/106_mod2.rds")
+  
+}
+
+# Read saved data  
+mod2 <- readRDS("Data/106_mod2.rds")
+
+plot(mod2) ## default plot
+
+```
+
+### Summary of model
+
+```{r}
+
+summary(mod2)
+
+```
+
+## 6. Prediction on grid
+
+### Calculate predicted values
+
+```{r}
+
+if (FALSE){
+  
+  tic()
+  pred2 <- predict(mod2, newdata = pdata, se.fit = TRUE)
+  # 20 sec for 75000 observations
+  toc()
+  
+  pdata <- pdata %>%
+    mutate(
+      log_no3 = as.numeric(pred2$fit),
+      log_no3_se = as.numeric(pred2$se.fit)
+    )
+
+  saveRDS(pdata, "Data/106_mod2_pred_grid.rds")
+
+}
+
+pdata <- readRDS("Data/106_mod2_pred_grid.rds")
+
+
+```
+
+### Plots
+
+```{r}
+
+ggplot(pdata %>% filter(year %in% c(2003,2017)), aes(x,y)) +
+  geom_raster(aes(fill = log_no3),) +
+  scale_fill_viridis_c() +
+  # scale_fill_viridis_c(limits = c(-2,2.5)) +
+  coord_fixed() +
+  facet_wrap(vars(year), ncol = 2) +
+  ggtitle("Predicted NO3 concentrations, log10 scale")
+
+```
+
+```{r}
+
+pdata <- pdata %>% 
+  mutate(
+    no3 = 10^log_no3,
+    no3_lo = 10^(log_no3 - 2*log_no3_se),
+    no3_up = 10^(log_no3 + 2*log_no3_se)
+    )
+
+ggplot(pdata %>% filter(year %in% c(2003,2017)), aes(x = no3)) +
+  geom_histogram()+
+  facet_wrap(vars(year), ncol = 2) 
+
+# quantile(pdata$no3, seq(0,1,0.2))
+
+pdata %>% 
+  filter(year %in% c(2003,2017)) %>%
+  mutate(no3_b = cut(no3, breaks = c(0, 0.2, 1, 2.5, 5, 10, 25, 100))) %>%
+  ggplot(aes(x,y)) +
+  geom_raster(aes(fill = no3_b),) +
+  scale_fill_viridis_d() +
+  coord_fixed() +
+  facet_wrap(vars(year), ncol = 2) +
+  ggtitle("Predicted NO3 concentrations")
+
+```
+
+```{r}
+
+example_coor <- data.frame(
+  text = c("Norway", "France"),
+  x = c(2500, 2000),
+  y = c(3100, 2000)
+)
+
+pdata %>% 
+  left_join(example_coor, by = c("x","y")) %>% 
+  filter(!is.na(text)) %>%
+  ggplot(aes(year, no3)) +
+  geom_ribbon(aes(ymin = no3_lo,
+                  ymax = no3_up), fill = "lightblue") +
+  geom_line() +
+  facet_wrap(vars(text))
+
+
+
+```
+
+### Percentage change since 1992
+
+-   The change in percentage is the same everywhere (since the changes on log scale are the same anywhere, as we used an additive model)\
+-   *The total change is about 20%*
+
+```{r}
+
+# Example points 
+plot_data <- pdata %>% 
+  # Pick a random point
+  filter(x == 2500 & y == 2000) %>%
+  mutate(
+    no3_1992 = no3[year == 1992],
+    perc_change_since_1992 = 100*(no3 - no3_1992)/no3_1992) %>%
+  ungroup()
+  
+ggplot(plot_data, aes(year, perc_change_since_1992)) +
+  geom_line() +
+  labs(
+    title = "Percentage change",
+    y = "Change since 1992 (%)",
+    x = "Year") +
+  theme_bw()
+
+```
+
+### Percentage change since 1992, for two random points
+
+-   Just to check: the two are identical - as expected
+
+```{r}
+
+# Example points 
+example_coor <- data.frame(
+  text = c("Norway", "France"),
+  x = c(2500, 2000),
+  y = c(3100, 2000)
+)
+
+plot_data <- pdata %>% 
+  left_join(example_coor, by = c("x","y")) %>% 
+  filter(!is.na(text)) %>%
+  group_by(text) %>%
+  mutate(
+    no3_1992 = no3[year == 1992],
+    perc_change_since_1992 = 100*(no3 - no3_1992)/no3_1992) %>%
+  ungroup()
+  
+ggplot(plot_data, aes(year, perc_change_since_1992)) +
+  geom_line() +
+  facet_wrap(vars(text))
+
+```
+
+## 7. Residuals
+
+### Calculating predicted values and adding residuals
+
+-   Predicted values for all data
+
+```{r}
+
+# Creates new data set dat2, which is identical to
+#   nalysed data but has residuals as extra variables in addition  
+
+if (FALSE){
+  
+  tic()
+  pred2 <- predict(mod2, newdata = dat, se.fit = TRUE)
+  # 43 sec for 178 000 observations
+  toc()
+  
+  dat2 <- dat %>%
+    mutate(
+      log_no3_pred = as.numeric(pred2$fit),
+      log_no3_se = as.numeric(pred2$se.fit)
+    )
+
+  saveRDS(dat2, "Data/106_mod2_pred_obs.rds")
+
+}
+
+dat2 <- readRDS("Data/106_mod2_pred_obs.rds") %>%
+  mutate(
+    log_no3_res = log_no3 - log_no3_pred
+  )
+
+```
+
+### Actual residuals in one year
+
+```{r}
+
+yr <- 2020 
+
+dat_plot <- dat2 %>%
+  filter(year == yr) %>%
+  mutate(
+    x = dx*round(x/dx),
+    y = dy*round(y/dy)) %>%
+  group_by(x, y, year) %>%
+  summarize(
+    across(log_no3_res, 
+           .fns = list(mean=mean, sd=sd, median=median, min=min, max=max)),
+    .groups = "drop") 
+
+maxval <- max(abs(dat_plot$log_no3_res_mean))
+
+ggplot(dat_plot, aes(x,y)) +
+    geom_tile(aes(fill = log_no3_res_mean)) +
+    scale_fill_distiller(palette = "RdBu", limits = c(-maxval, maxval)) +
+    coord_fixed() +
+  annotate("path", 
+           x = country_borders$x, 
+           y = country_borders$y, 
+           group = country_borders$group,
+           color = "red") +
+  ggtitle(paste0("NO3 residuals (", yr, "), log10 scale")) 
+
+```
+
+### Space-smoothed residuals for the same year
+
+-   Same color scale as above
+
+```{r}
+
+if (TRUE){
+  
+  dat2_sel <- dat2 %>% filter(year == yr)
+  
+  tic()
+  mod <- gam(log_no3_res ~ s(x, y, k=100),
+              data = dat2_sel)
+  toc()   # 7 sec for k = 200  
+
+}
+
+# plot(mod) ## default plot
+
+pred <- predict(mod, newdata = pdata_space_s, se.fit = TRUE)  
+
+pred_residuals <- pdata_space_s %>%
+  mutate(
+    log_no3_res = pred$fit,
+    log_no3_res_se = pred$se.fit
+  )
+
+# maxval <- max(abs(pred_residuals$log_no3_res))
+
+ggplot(pred_residuals, aes(x,y)) +
+  geom_raster(aes(fill = log_no3_res),) +
+  coord_fixed() +
+  scale_fill_distiller(palette = "RdBu", limits = c(-maxval, maxval)) +
+  ggtitle(paste0("Smoothed residuals of log10 NO3 (", yr, ")"))
+
+```
+
+## 8. Space-smoothed residuals
+
+### Function for getting spatial residuals
+
+```{r}
+
+get_residual_spatial_model <- function(data, points_in_space){
+  
+  mod <- gam(log_no3_res ~ s(x, y, k=100), data = data)
+
+  pred <- predict(mod, newdata = points_in_space, se.fit = TRUE)  
+  
+  points_in_space %>%
+    mutate(
+      log_no3_res = as.numeric(pred$fit),
+      log_no3_res_se = as.numeric(pred$se.fit)
+    )
+}
+
+# test function
+# dat2_sel <- dat2 %>% filter(year == 2020)
+# test <- get_residual_spatial_model(dat2_sel, points_in_space = pdata_space_s)
+
+```
+
+### Residuals in 5 year periods
+
+```{r}
+
+dat2 <- dat2 %>% 
+  mutate(period = cut(year, breaks = c(seq(1992,2018,5), 2020), 
+                      include.lowest = TRUE, right = FALSE))
+table(addNA(dat2$period))
+
+if (FALSE){
+  tic()
+  res_models <- dat2 %>%
+    split(.$period) %>%
+    map(get_residual_spatial_model, points_in_space = pdata_space_s)
+  toc()
+  # 51 seconds  
+  saveRDS(res_models, "Data/106_res_models_period.rds")
+}
+
+res_models <- readRDS("Data/106_res_models_period.rds")
+
+period <- "[2017,2020]"
+
+ggplot(res_models[[period]], aes(x,y)) +
+  geom_raster(aes(fill = log_no3_res)) +
+  scale_fill_viridis_c() +
+  coord_fixed() +
+#  facet_wrap(vars(year), ncol = 2) +
+  ggtitle(paste0("Residuals log10 NO3, ",  period))
+
+
+
+```
+
+### Residuals for every year
+
+```{r}
+
+if (FALSE){
+  tic()
+  res_models <- dat2 %>%
+    split(.$year) %>%
+    map(get_residual_spatial_model, points_in_space = pdata_space_s)
+  toc()
+  # 75 seconds  
+  saveRDS(res_models, "Data/106_res_models_year.rds")
+}
+
+res_models <- readRDS("Data/106_res_models_year.rds")
+
+yearstring <- "2017"
+
+ggplot(res_models[[yearstring]], aes(x,y)) +
+  geom_raster(aes(fill = log_no3_res)) +
+  scale_fill_viridis_c() +
+  coord_fixed() +
+#  facet_wrap(vars(year), ncol = 2) +
+  ggtitle(paste0("Smoothed residuals log10 NO3, ",  yearstring))  
+
+
+
+```
+
+## 9. Select example 50 x 50 km grid cells
+
+```{r}
+
+sitenames <- c("Denmark", "Norway", "Finland", 
+               "France", "Germany", "Slovakia", 
+               "Portugal", "Italy", "Bulgaria")
+
+example_location <- structure(
+  list(
+    countryCode = c("DK", "NO", "FI", 
+                    "FR", "DE", "SK", 
+                    "PT", "IT", "BG"), 
+    site = factor(sitenames, levels = sitenames),
+    x = c(2650, 2600, 3250, 
+          1950, 2550, 3200, 
+          900, 2800, 3850), 
+    y = c(2750, 3200, 3600, 
+          2050, 2000, 2000, 
+          900, 1300, 1500)), 
+  row.names = c(NA, -9L), class = c("tbl_df", "tbl", "data.frame"))
+
+example_location$i <- 1:nrow(example_location)
+
+
+ggplot(pdata %>% filter(year %in% c(2020)), aes(x,y)) +
+  scale_fill_viridis_c() +
+  geom_text(data = example_location, aes(label = i), color = "blue2") +
+  annotate("path", x = country_borders$x, y = country_borders$y, group = country_borders$group) +
+  coord_fixed()
+
+```
+
+## 10. Development over time for some points
+
+### Get smoothed residuals
+
+-   Spatially smoothed residuals for every year
+
+```{r}
+
+# Example
+i <- 1   # point in space (example_location) 
+j <- 1   # year 
+xsel <- example_location$x[i]
+ysel <- example_location$y[i]
+res_models[[j]] %>%
+  filter(x == xsel & y == ysel) %>%
+  mutate(year = names(res_models)[j])
+
+# Function  
+get_smoothed_res <- function(i, j){
+  xsel <- example_location$x[i]
+  ysel <- example_location$y[i]
+  site <- example_location$site[i]
+  res_models[[j]] %>%
+    filter(x == xsel & y == ysel) %>%
+    mutate(
+      site = site,
+      year = as.numeric(names(res_models)[j]))
+}
+# debugonce(get_smoothed_res)
+get_smoothed_res(1,1)
+
+# Site x year combinations  
+site_x_years <- expand.grid(
+  i = 1:nrow(example_location),
+  j = 1:length(res_models))
+
+# Run 'get_smoothed_res' for each row, and collect in a data frame
+smoothed_resid <- pmap_df(
+  site_x_years,
+  get_smoothed_res
+) %>%
+  mutate(site = factor(site, levels = sitenames))
+
+
+```
+
+#### Plots
+
+```{r}
+
+ggplot(smoothed_resid, aes(year, log_no3_res)) +
+  geom_smooth() +
+  geom_point() +
+  facet_wrap(vars(site)) +
+  ggtitle("Residuals (smoothed in space) for 9 'random' locations") +
+  labs(
+    y = "Residuals of log NO3")
+
+
+```
+
+### Expected no3 for same locations
+
+-   Given the additive space + time model
+
+```{r}
+
+pdata %>% 
+  left_join(example_location, by = c("x","y")) %>% 
+  filter(!is.na(site)) %>%
+  ggplot(aes(year, no3)) +
+  geom_ribbon(aes(ymin = no3_lo,
+                  ymax = no3_up), fill = "lightblue") +
+  geom_line() +
+  # geom_point() +
+  scale_y_log10() +
+  facet_wrap(vars(site)) +
+  labs(
+    title = "Expected no3 from additive space + time model",
+    y = "Expected no3")
+
+
+```
+
+### Additive pattern for same locations
+
+```{r}
+
+pdata %>% 
+  left_join(example_location, by = c("x","y")) %>% 
+  filter(!is.na(site)) %>%
+  left_join(smoothed_resid %>% select(site, year, log_no3_res), by = c("site", "year")) %>%
+  mutate(
+    log_no3_exp_res = log_no3 + log_no3_res,
+    no3_exp_res = 10^(log_no3_exp_res)
+  ) %>%
+  ggplot(aes(year, no3_exp_res)) +
+  # geom_ribbon(aes(ymin = no3_lo,
+  #                 ymax = no3_up), fill = "lightblue") +
+  geom_point() +
+  geom_line(aes(y = no3)) +
+  scale_y_log10() +
+  facet_wrap(vars(site))
+
+
+```
+
+## 11. Actual data for the same locations
+
+### Summarise data per 50 km squares
+
+```{r}
+
+# Already given above (part 5)
+# dx <- 50
+# dy <- 50
+
+dat_binned <- dat %>%
+  mutate(
+    x = dx*round(x/dx),
+    y = dy*round(y/dy)) %>%
+  group_by(x, y, year) %>%
+  summarize(
+    across(log_no3, 
+           .fns = list(mean=mean, sd=sd, median=median, min=min, max=max)),
+    countryCode = paste(unique(countryCode), collapse = ", "),
+    n = n(),
+    n_site = length(unique(site)),
+    .groups = "drop"
+  )
+
+# Add som back-transformed variables
+dat_binned <- dat_binned %>%
+  mutate(
+    no3_mean = 10^log_no3_mean,
+    no3_min = 10^(log_no3_min),
+    no3_max = 10^(log_no3_max)
+    )
+
+```
+
+#### Get top 50x50 km squares
+
+-   *Only* used to code 'example_location' further up (part 9)
+
+```{r}
+
+# Top 50x50 km square (number of years) per country  
+
+best_bins <- dat_binned %>%
+  group_by(countryCode, x, y) %>%
+  summarize(no_years = length(unique(year))) %>%
+  group_by(countryCode) %>%
+  mutate(no_years_max = max(no_years)) %>%
+  filter(no_years == no_years_max)
+
+best_bins_random <- best_bins %>%
+  group_by(countryCode) %>%
+  mutate(rand = runif(length(no_years)),
+         rand_max = max(rand)) %>%
+  filter(rand == rand_max) %>%
+  ungroup()
+
+rownames(best_bins_random) <- best_bins_random$countryCode
+
+if (FALSE){
+  best_bins_random[c("DK", "NO", "FI",
+                     "FR", "DE", "SK",
+                     "PT", "IT", "BG"),] %>%
+    select(countryCode, x, y)  %>% dput()   # use dput to make 'example_location' further up  
+}
+
+```
+
+### Plot concentrations for example locations
+
+-   Same
+
+#### Log10 scale
+
+```{r}
+
+# example_location <- data.frame(x = )
+
+dat_binned %>% 
+  left_join(example_location, by = c("x","y")) %>% # View() 
+  filter(!is.na(site)) %>%
+  ggplot(aes(year, log_no3_mean)) +
+  geom_point() +
+  # scale_y_log10() +
+  facet_wrap(vars(site)) +
+  ggtitle("Summarized data for example 50x50 km squares, log10 scale")
+
+
+```
+
+#### Actual scale
+
+```{r}
+
+# example_location <- data.frame(x = )
+
+gg <- dat_binned %>% 
+  left_join(example_location, by = c("x","y")) %>% # View() 
+  filter(!is.na(site)) %>%
+  mutate(
+    no3_mean = 10^log_no3_mean,
+    no3_min = 10^(log_no3_min),
+    no3_max = 10^(log_no3_max)
+    ) %>%
+  ggplot(aes(year, no3_mean)) +
+  geom_linerange(aes(ymin = no3_min, ymax = no3_max), ) +
+  geom_point(size = rel(1)) +
+  facet_wrap(vars(site)) +
+  ggtitle("Summarized data for example 50x50 km squares, log10 scale")
+
+gg
+
+gg + scale_y_log10()
+
+```
+
+### Compare observed summarized data with expectations
+
+-   Expectations from the additive space + year model
+
+```{r}
+
+gg <- pdata %>% 
+  left_join(example_location, by = c("x","y")) %>% 
+  filter(!is.na(site)) %>%
+  left_join(dat_binned %>% select(x, y, year, no3_mean, no3_min, no3_max),
+            by = c("x", "y", "year")) %>%
+  ggplot(aes(year, no3)) +
+  geom_ribbon(aes(ymin = no3_lo,
+                  ymax = no3_up), fill = "lightblue") +
+  geom_line() +
+  # geom_linerange(aes(ymin = no3_min, ymax = no3_max)) + 
+  geom_point(aes(y = no3_mean)) +
+  facet_wrap(vars(site)) +
+  labs(
+    title = "Expectation from additive space + year model (line) vs. observations (points)"
+  )
+
+gg
+
+gg + scale_y_log10()
+
+```
