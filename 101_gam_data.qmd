@@ -30,6 +30,7 @@ library(lubridate)
 library(ggplot2)
 library(forcats)
 library(sp)
+library(tictoc)
 
 library(maps)
 library(mapdata)
@@ -257,6 +258,52 @@ nrow(dat_02)
 
 ```
 
+### Remove duplicates in 'site'   
+
+* 21 sites have two coordinates (and as much as 50 km apart)   
+* But they differ in 'monitoringSiteIdentifierScheme' ('monitoringSiteIdentifierScheme' or 'eumonitoringSiteIdentifierScheme')  
+* Add 'ei' or 'eu' to those 21 sites  
+
+```{r}
+
+# 21 sites have two coordinates (and as much as 50 km apart)  
+df_dupl_sites <- dat_02 %>%
+  distinct(site, lon, lat) %>%
+  add_count(site) %>%
+  filter(n > 1)   
+
+dupl_sites <- df_dupl_sites %>%
+  pull(site) %>% 
+  unique()
+
+cat("Number of duplicate sites:", length(dupl_sites), "\n")
+
+dat_dupl_sites <- dat_02 %>%
+  select(site, monitoringSiteIdentifierScheme, lon, lat) %>%
+  filter(site %in% dupl_sites)
+
+dat_02 <- dat_02 %>%
+  mutate(
+    scheme = substr(monitoringSiteIdentifierScheme, 1, 2),   
+    site = case_when(
+      site %in% dupl_sites ~ paste0(site, "_", scheme),
+      TRUE ~ site)
+  )
+
+df_dupl_sites2 <- dat_02 %>%
+  distinct(site, lon, lat) %>%
+  add_count(site) %>%
+  filter(n > 1)   
+
+dupl_sites2 <- df_dupl_sites2 %>%
+  pull(site) %>% 
+  unique()
+
+cat("Number of duplicate sites:", length(dupl_sites2), "\n")
+
+
+```
+
 ### Filter by year and geographic spread
 
 #### Map
@@ -359,7 +406,7 @@ if (FALSE){
 
 ```
 
-## 3. Save filtered data
+## 3. Save somewhat filtered data 
 
 ```{r}
 
@@ -476,7 +523,7 @@ dat %>%
 
 ### Length of time covered vs. number of years
 
-#### All data
+#### Site level  
 
 ```{r}
 
@@ -485,26 +532,36 @@ dat %>%
   group_by(site) %>%
   summarise(
     Number_of_years = n(),
-    Length_of_series = max(year)-min(year)+1) %>%
-  count(Length_of_series, Number_of_years) %>%
-  ggplot(aes(Length_of_series, Number_of_years, size = n)) +
-  geom_point()
+    Length_of_series = max(year)-min(year)+1,
+    First_year = min(year),
+    First_year_before_2000 = First_year < 2000) %>%
+  count(Length_of_series, Number_of_years, First_year_before_2000) %>%
+
+  ggplot(aes(Length_of_series, Number_of_years, size = n, color = n)) +
+  geom_point() +
+  facet_wrap(vars(First_year_before_2000), labeller = label_both) +
+  ggtitle("Number of site")
+  
 
 ```
 
-#### All data
+#### Waterbody level  
 
 ```{r}
 
 dat %>%
-  distinct(site, year) %>%
-  group_by(site) %>%
+  distinct(waterbody, year) %>%
+  group_by(waterbody) %>%
   summarise(
     Number_of_years = n(),
-    Length_of_series = max(year)-min(year)+1) %>%
-  count(Length_of_series, Number_of_years) %>%
-  ggplot(aes(Length_of_series, Number_of_years, size = n)) +
-  geom_point()
+    Length_of_series = max(year)-min(year)+1,
+    First_year = min(year),
+    First_year_before_2000 = First_year < 2000) %>%
+  count(Length_of_series, Number_of_years, First_year_before_2000) %>%
+  ggplot(aes(Length_of_series, Number_of_years, size = n, color = n)) +
+  geom_point() +
+  facet_wrap(vars(First_year_before_2000), labeller = label_both) +
+  ggtitle("Number of waterbody level")
 
 ```
 
@@ -549,6 +606,201 @@ dat %>%
 
 
 ```
+
+## 5. Selection of sites  
+
+### Select groups 1, 2, 3a    
+
+```{r}
+
+dat_sites <- dat %>%
+  distinct(site, x, y, year) %>%
+  group_by(site, x, y) %>%
+  summarise(
+    Number_of_years = n(),
+    Years_span = max(year)-min(year)+1,
+    First_year = min(year),
+    First_year_before_2000 = First_year < 2000,
+    .groups = "drop") %>%
+  as.data.frame()
+
+cat("Number of sites:", nrow(dat_sites), "\n")
+
+#
+# Check if some sites have nore than one coordinate
+#
+check <- dat_sites %>%
+  add_count(site) %>%
+  filter(n > 1) %>%
+  arrange(site) 
+
+if (nrow(check) > 0)
+  stop("Some sites have nore than one coordinate")
+
+#
+# 'Number_of_years' needs to be at least 2
+#
+dat_sites <- dat_sites %>%
+  filter(Number_of_years >= 2)
+
+cat("Number of sites after removing '1-years':", nrow(dat_sites), "\n")
+
+#
+# Group 1 - always include these:
+#
+dat_sites_group1 <- dat_sites %>%
+  filter(First_year_before_2000 & Number_of_years >= 10  & Years_span >= 20)
+
+cat("Number of sites in group 1 ('always include'):", nrow(dat_sites_group1), "\n")
+
+#
+# Group 2 - always include for analyses after 2000:
+#
+dat_sites_group2 <- dat_sites %>%
+  filter(!site %in% dat_sites_group1$site) %>%
+  filter(Number_of_years >= 4  & Years_span >= 12)
+
+cat("Number of sites in group 2 ('always include after 2000'):", nrow(dat_sites_group2), "\n")
+
+#
+# Possibly include these (if close to others):
+# 3a = before distance selection, 3b will be after distance selection  
+#
+dat_sites_group3a <- dat_sites %>%
+  filter(!site %in% c(dat_sites_group1$site, dat_sites_group2$site))
+
+cat("Number of sites in group 3a ('possibly include'):", nrow(dat_sites_group3a), "\n")
+
+```
+
+
+#### Distance   
+
+
+```{r}
+#| echo: false
+#| results: false
+
+# TEST of 'distances' package
+
+# my_data_points <- data.frame(x = c(1, 2, 3, 4, 5, 6, 7, 8, 9, 10),
+#                              y = c(10, 9, 8, 7, 6, 6, 7, 8, 9, 10))
+# my_distances1 <- distances(my_data_points)
+# my_distances1
+# nn <- nearest_neighbor_search(my_distances1, 4)
+# nn
+# distance_columns(my_distances1, c(1,5,6,9))
+
+```
+
+
+
+```{r}
+
+if (FALSE){
+  
+  # Do only once 
+  #   if 
+  
+  # https://github.com/fsavje/distances
+  # install.packages("distances")
+  # help(package = "distances")
+  if (!"distances" %in% installed.packages())
+    install.packages("distances")
+  library(distances)
+  
+  # Calculate distances - quick    
+  tic()
+  dist1 <- distances(dat_sites, dist_variables = c("x","y"), id_variable = "site")
+  toc()
+  # 6.561 sec elapsed
+  
+  # showing the first 20
+  # dist1
+  
+  sites1 <- dat_sites_group1$site 
+  sites2 <- dat_sites_group2$site
+  sites12 <- c(sites1, sites2)
+  sites3a <- dat_sites_group3a$site # %>% head(1000)  
+  
+  #
+  # extract the columns of the matrix that corresponds to sites in group 3a  
+  # ("distance-from" sites)
+  #
+  tic()
+  dist2 <- distance_columns(dist1, which(attr(dist1, "ids") %in% sites3a))
+  toc()  # 13 seconds  
+  dim(dist2)
+  
+  #
+  # extract the rows ("distance-to" sites) that corresponds to sites in group 1 + 2
+  #
+  tic()
+  dist3 <- dist2[sites12,]
+  toc() # 2 sec
+  
+  dim(dist3) 
+  
+  # Saving 'dist3' is slow
+  # tic()
+  # saveRDS(dist3, "Data/101_dist3.rds")
+  # toc()  # 1 minute?  
+  
+  # For each site in 3a find shortest distance to a group 1 site   
+  tic()
+  min_dist_group3a <- apply(dist3, 2, min)
+  toc()   # 6 seconds  
+  
+  length(min_dist_group3a)  
+  
+  saveRDS(min_dist_group3a, "Data/101_min_dist_group3a.rds")
+  
+}
+
+min_dist_group3a <- readRDS("Data/101_min_dist_group3a.rds")
+
+brks <- seq(0, 50*ceiling(max(min_dist_group3a)/50), 50)
+hist(min_dist_group3a, breaks = brks)
+hist(min_dist_group3a[min_dist_group3a <= 50], breaks = seq(0,50,5))
+
+
+```
+### Select by distance (group 3b)
+```{r}
+
+#
+# Include these (close enough to others):
+# 3a = before distance selection, 3b = after distance selection  
+#
+
+# USe 50 km as minimum distance  
+sites3b <- names(min_dist_group3a[min_dist_group3a <= 50])
+
+dat_sites_group3b <- dat_sites_group3a %>%
+  filter(site %in% sites3b)
+
+cat("Number of sites in group 3a ('possibly include'):", nrow(dat_sites_group3a), "\n")
+cat("Number of sites in group 3b ('include because close to others'):", nrow(dat_sites_group3b), "\n")
+
+```
+
+
+
+## 3. Save filtered data 
+
+```{r}
+
+dat_selected <- bind_rows(
+  dat_sites_group1 %>% mutate(Sitegroup = 1),
+  dat_sites_group2 %>% mutate(Sitegroup = 2),
+  dat_sites_group3b %>% mutate(Sitegroup = 3)
+)
+
+saveRDS(dat_selected, "Input_data/WISE_GWNO3_sel3.rda")
+
+```
+
+
 
 ### Interactive map
 
