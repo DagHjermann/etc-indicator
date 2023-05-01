@@ -1,0 +1,122 @@
+---
+title: "108 old stuff"
+format: html
+editor: visual
+---
+
+
+
+
+```{r}
+
+pdata_periods <- map(
+  pdata,
+  ~ mutate(., period = cut(year, breaks = c(seq(1992,2018,5), 2020), 
+                            include.lowest = TRUE, right = FALSE)) %>%
+        group_by(period, x, y) %>%
+        summarize(
+          log_no3 = mean(log_no3),
+          log_no3_se = mean(log_no3_se),
+          log_no3_lo = mean(log_no3 - 2*log_no3_se),
+          log_no3_hi = mean(log_no3 + 2*log_no3_se), .groups = "drop"
+        )
+  )
+      
+# i <- 1
+# i <- 2
+# table(pdata_periods[[i]]$period)
+# table(pdata_periods[[i]]$period) %>% names()
+
+reference_period <- list("[1992,1997)", "[1997,2002)", "[1997,2002)")
+
+pdata_period_diff <- map2(
+  pdata_periods, reference_period,
+  ~ left_join(.x, 
+              # Add 
+              ungroup(.x) %>%
+                filter(period == .y) %>% # View()
+                select(x, y, log_no3, log_no3_se) %>%
+                rename(log_no3_1992 = log_no3,
+                       log_no3_se_1992 = log_no3_se) ,
+              by = c("x","y")) %>%
+    mutate(
+      log_no3_change = log_no3 - log_no3_1992,
+      log_no3_change_se = sqrt(log_no3_se^2 + log_no3_se_1992^2),
+      log_no3_change_lo = log_no3_change - 2*log_no3_change_se,
+      log_no3_change_hi = log_no3_change + 2*log_no3_change_se,
+      no3_rel = (10^log_no3_change)*100
+    )
+)
+
+# View(pdata_period_diff[[2]])
+
+for (i in 1:2){
+  
+  dataset <- c("data since 1992", "data since 2000")
+  
+  gg <- ggplot(pdata_period_diff[[i]], aes(x = no3_rel)) +
+    geom_histogram() +
+    facet_wrap(vars(period)) +
+    labs(title = glue("Distribution of relative NO3 concentrations {dataset[i]}"),
+         subtitle = "Reference period is set to 100") 
+  
+  print(gg)
+  
+  gg <- pdata_period_diff[[i]] %>% 
+    mutate(no3_rel_b = cut(no3_rel, breaks = c(0, 50, 100, 150, 200, 300, 500, 4000))) %>%
+    ggplot(aes(x,y)) +
+    geom_raster(aes(fill = no3_rel_b),) +
+    scale_fill_viridis_d() +
+    coord_fixed() +
+    facet_wrap(vars(period)) +
+    labs(title = glue("NO3 concentrations relative to reference period {dataset[i]}"),
+         subtitle = "Reference period is set to 100") 
+
+  print(gg)
+  
+}
+
+
+```
+
+### View both models and the data for one grid cell  
+
+```{r}
+
+pred_for_gridcell <- function(xval, yval, data = pdata){
+  bind_rows(
+    filter(data[[1]], x %in% xval, y %in% yval) %>% mutate(model = "Model 1992-, group 1"),
+    filter(data[[2]], x %in% xval, y %in% yval) %>% mutate(model = "Model 2000-, group 1-3"),
+    filter(data[[3]], x %in% xval, y %in% yval) %>% mutate(model = "Model 2000-, group 1")) %>%
+    arrange(year, model) %>%
+    filter(!is.na(log_no3))
+}
+
+data_for_gridcell <- function(xval, yval, data = dat){
+  filter(data, grid_x %in% xval, grid_y %in% yval)
+}
+
+# debugonce(pred_for_gridcell)
+# pred_for_gridcell(2000, 2000) %>% View()
+# data_for_gridcell(2000, 2000) %>% View()
+
+x <- 2000
+y <- 2000
+
+gg <- ggplot(pred_for_gridcell(x, y), aes(year, log_no3)) +
+  geom_ribbon(aes(ymin = log_no3 - 2*log_no3_se,
+                 ymax = log_no3 + 2*log_no3_se,
+                 group = model), fill = "grey80") +
+  geom_line(aes(color = model))
+
+gg + 
+  geom_point(data = data_for_gridcell(x, y), aes(color = site))
+
+gg + 
+  geom_point(data = data_for_gridcell(x, y), aes(color = factor(sitegroup)))
+
+```
+
+
+
+
