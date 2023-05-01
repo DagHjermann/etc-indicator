@@ -1,5 +1,5 @@
 ---
-title: "108_gam_interact_spatial"
+title: "108_gam_wb_level"
 format: 
   html:
     toc: true
@@ -7,7 +7,9 @@ format:
 editor: visual
 ---
 
--   Use model s(x,y) + s(year)\
+-   Split anaøysis in analyses on Water body level and full analysis  
+-   Use model s(year) (w/ bootstrap?) for each water body 
+-   Then use use predictions from those to model s(x,y) + s(year)     
 -   Use ordinary spatial thin-plate smooth, i.e. default version of s(x,y) instead of soap-film smoother
 -   Using data for all Europe
 
@@ -481,8 +483,7 @@ bind_rows(
 
 ```
 
-
-## 7. GAM, interactive effects of space and time
+## 7. GAM for each water body  
 
 ### Groups of sites   
 
@@ -521,6 +522,184 @@ ggplot(data_for_plot, aes(grid_x, grid_y)) +
   easy_remove_axes(what = "title")
 
 ```
+
+### Check 'waterbody'  
+
+```{r}
+
+check <- dat %>%
+  distinct(waterbody, waterBodyIdentifierScheme) %>%
+  add_count(waterbody) %>%
+  filter(n > 1)
+
+if (nrow(check) > 0){
+  stop("Same 'waterbody' occurs for different 'waterBodyIdentifierScheme'")
+} else {
+  message("Names of 'waterbody' checked and are unique")
+}
+
+```
+### Data frame with one row per water body  
+
+* Includes 
+
+```{r}
+
+df_wb <- dat %>%
+  group_by(countryCode, waterbody) %>%
+  summarize(
+    n_rows = length(site),
+    n_sites = length(unique(site)),
+    n_years = length(unique(year)),
+    group_1 = length(unique(site[sitegroup %in% 1])),
+    group_2 = length(unique(site[sitegroup %in% 2])),
+    group_3 = length(unique(site[sitegroup %in% 3])),
+    .groups = "drop"
+  )
+
+nrow(df_wb)
+summary(df_wb)
+
+
+
+```
+
+### Run GAM for each water body with sitegroup 1 or 2  
+
+```{r}
+
+# Add site_f 
+dat <- dat  %>%
+  mutate(site_f = factor(site))
+
+```
+
+### Test random intercept model  
+
+* http://www.let.rug.nl/wieling/statscourse/lecture3/#21  
+
+```{r}
+
+dat_test <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042")
+
+# dat_test <- dat %>% filter(waterbody %in% "DK1-15-2-8-SVENDBORGOEST")
+xtabs(~site, dat_test)
+xtabs(~year, dat_test)
+
+m1 <- gam(log_no3 ~ s(year, k = 2), data = dat_test)
+m2 <- gam(log_no3 ~ s(year, k = 2) + s(site_f, bs = "re"), data = dat_test)
+summary(m1)
+summary(m2)
+# install.packages("itsadug")
+library(itsadug)
+plot_smooth(m1, view = "year", rug = F, main = "m1")
+plot_smooth(m2, view = "year", rug = F, main = "m2", rm.ranef = T)
+
+```
+
+### Function for running GAM with random site effect  
+
+```{r}
+
+df_wb_sel <- df_wb %>%
+  filter(group_1 > 0 | group_2 > 0)
+
+quantile(df_wb_sel$n_years)
+
+wbs <- pull(df_wb_sel, waterbody)
+length(wbs)
+
+run_gam_1 <- function(wb){
+  data_sel <- dat %>% filter(waterbody %in% wb)
+  n_year <- length(unique(data_sel$year))
+  k_max <- min(n_year - 2, 8)
+  k_max <- max(k_max, 3)
+  if (length(unique(data_sel$site)) > 1){
+    gam(log_no3 ~ s(year, k = k_max) + s(site_f, bs = "re"), 
+        data = data_sel)
+  } else {
+    gam(log_no3 ~ s(year, k = k_max), data = data_sel)
+  }
+}
+
+if (FALSE){
+  
+  m1 <- run_gam_1("DEGB_DEST_SAL-GW-042") 
+  predict(m1)
+  # yrs <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% pull(year)
+  # predict(m1, data.frame(year = yrs))
+  
+  m1 <- run_gam_1("DK1-15-2-8-SVENDBORGOEST") 
+
+}
+
+
+```
+
+### Test running several WBs   
+```{r}
+
+run_gam <- safely(run_gam_1)
+
+set.seed(10)
+wbs_test <- sample(wbs, 100)  
+
+tic()
+mod_orig <- purrr::map(wbs_test, run_gam)
+toc()
+
+mod <- transpose(mod_orig)
+
+ok <- map_lgl(mod$error, is.null)  
+# ok
+
+
+# df_wb %>% filter(waterbody %in% wbs_test[!ok]) %>% View()
+
+
+```
+
+### Run all WBs    
+
+```{r}
+
+if (rerun_gam_fitting){
+  
+  tic()
+  mod_orig <- purrr::map(wbs, run_gam)
+  toc()   # 174 sec
+  
+  saveRDS(mod_orig, "Data/120_mod_orig.rds")
+
+}
+
+mod_orig <- readRDS("Data/120_mod_orig.rds")  
+
+mod <- transpose(mod_orig)
+
+ok <- map_lgl(mod$error, is.null)  
+mean(ok)
+length(ok)
+
+wbs_sel <- wbs[ok]
+
+
+```
+### Predictions  
+```{r}
+
+if (rerun_gam_predictions){
+  
+  
+  
+}
+
+```
+
+
+## 7. GAM, interactive effects of space and time
+
+
 
 ### Datasets for each run  
 
