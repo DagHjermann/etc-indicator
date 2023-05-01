@@ -1,0 +1,199 @@
+---
+title: "GAM_bootstrap_results"
+author: "DHJ"
+format: html
+---
+
+## 1. Packages
+
+```{r, include=FALSE}
+
+# Many of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
+
+library(mgcv)        # gam 
+library(dplyr)       # tidyverse 
+library(ggplot2)     # tidyverse plots
+library(ggeasy)      # for use with ggplot 
+library(viridis)     # for scale_color_viridis  
+library(forcats)     # tidyverse
+library(purrr)       # tidyverse
+library(glue)        # tidyverse, easier alternative to paste0
+library(tictoc)      # tic() and toc() for timing   
+library(terra)       # spatial functions  
+
+country_borders <- readRDS("Input_data/country_borders.rda")
+
+```
+
+## 2. Read bootstrap samples  
+```{r}
+
+sample_folder <- "Data/109_bootstraps"
+fns <- dir(sample_folder)
+
+ x1 <- readRDS(paste0(sample_folder, "/", fns[1]))  
+# x2 <- readRDS(paste0(sample_folder, "/", fns[2]))  
+ x3 <- readRDS(paste0(sample_folder, "/", fns[3]))  
+# pdata_list <- list(x1, x2, x3) %>% transpose()
+# str(pdata_list, 1)
+# str(pdata_list, 2)
+
+read_file <- function(filename)
+  readRDS(paste0(sample_folder, "/", filename))
+read_file <- safely(read_file)
+  
+pdata_list <- purrr::map(fns, read_file) %>%
+  transpose()
+file_is_ok <- map_lgl(pdata_list$error, is.null)
+pdata_list <- pdata_list$result[file_is_ok]
+# str(pdata_list[[1]], 1)
+
+# We want only the first 4 list objects   
+pdata_list <- map(pdata_list, ~.[1:4])
+# str(pdata_list[[1]], 1)
+
+if (FALSE){
+  pdata_list[[1]] %>%
+    filter(x == 2000, y == 2000) %>% arrange(year, sample) %>% View()
+}
+
+pdata <- purrr::map(
+  transpose(pdata_list),     # turn list into list of 4, each containing a list of replicates   
+  ~bind_rows(., .id = "sample")
+)
+length(pdata)
+
+pdata_summ_list <- purrr::map(
+  pdata,
+  ~group_by(., year) %>%
+    summarize(
+      log_no3_mean = mean(log_no3),
+      log_no3_lo = quantile(log_no3, 0.05),
+      log_no3_up = quantile(log_no3, 0.95))
+)
+length(pdata_summ_list)
+nrow(pdata_summ_list[[1]])
+View(pdata_summ_list[[1]])
+
+pdata_summ <- bind_rows(pdata_summ_list, .id = "modelrun")
+
+
+```
+
+
+## 3. Plot   
+
+* Impressive confidence intervals   
+
+```{r}
+
+gg <- ggplot(pdata_summ, 
+       aes(year, log_no3_mean)) +
+  labs(title = "Year effect, estimated log means")
+
+gg +
+  geom_line(aes(color = modelrun))
+
+gg +
+  geom_ribbon(aes(ymin = log_no3_lo, ymax = log_no3_up, group = modelrun), fill = "grey70") +
+  geom_line(aes(color = modelrun)) +
+  facet_wrap(vars(modelrun))
+
+
+```
+
+## 4. Per grid cell  
+
+### Testing  
+```{r}
+
+# Select a few grid cells  
+test <- pdata[[1]]  %>%
+    filter(x >= 2000, x <= 4000, y == 2000) %>% arrange(year, sample)  
+
+# xtabs(~sample + x, test)
+# Altarnative to the big table above
+ggplot(test %>% count(sample, x), aes(sample, x, fill = n)) +
+  geom_tile()
+
+if (FALSE){
+  ggplot(test %>% filter(x == 2100), aes(year, log_no3)) +
+    geom_point()
+  ggplot(test %>% filter(x == 2200), aes(year, log_no3)) +
+    geom_point()
+}
+
+test %>% 
+  group_by(x, year) %>%
+  summarize(
+      log_no3_mean = mean(log_no3, na.rm = TRUE),
+      log_no3_sd = sd(log_no3, na.rm = TRUE),
+      log_no3_lo = quantile(log_no3, 0.05),
+      log_no3_up = quantile(log_no3, 0.95)) %>%
+  ggplot(aes(year, log_no3_sd)) +
+  geom_line() +
+  facet_wrap(vars(x))
+
+```
+
+### Get median SD for all model runs and years  
+
+* First get SD for all cells and years
+
+```{r}
+
+pdata_summ_bycell <- purrr::map(
+  pdata,
+  ~group_by(., x, y, year) %>%
+  summarize(
+      log_no3_mean = mean(log_no3, na.rm = TRUE),
+      log_no3_sd = sd(log_no3, na.rm = TRUE),
+      log_no3_lo = quantile(log_no3, 0.05),
+      log_no3_up = quantile(log_no3, 0.95))
+)
+
+pdata_summ_median_sd <- purrr::map(
+  pdata_summ_bycell,
+  ~group_by(., year) %>%
+  summarize(log_no3_sd_med = median(log_no3_sd))
+) %>%
+  bind_rows(.id = "modelrun")
+  
+
+ggplot(pdata_summ_bycell[[1]], aes(year, log_no3_sd, group = paste(x,y))) +
+  geom_line()
+
+pdata_summ_bycell[[1]] %>%
+  group_by(year) %>%
+  summarize(log_no3_sd_med = median(log_no3_sd)) %>%
+  ggplot(aes(year, log_no3_sd_med)) +
+  geom_line()
+
+ggplot(pdata_summ_median_sd, aes(year, log_no3_sd_med, color = modelrun)) +
+  geom_line()
+
+
+```
+
+### Add to pdata_summ  
+
+```{r}
+
+pdata_summ2 <- pdata_summ %>%
+  left_join(pdata_summ_median_sd, by = c("modelrun", "year")) %>%
+  mutate(
+    # redefine lower and upper bounds (compared to 'pdata_summ')
+    log_no3_lo = log_no3_mean - 2*log_no3_sd_med,
+    log_no3_up = log_no3_mean + 2*log_no3_sd_med
+  )
+
+gg <- ggplot(pdata_summ2, 
+       aes(year, log_no3_mean)) +
+  labs(title = "Year effect, estimated log means") +
+  geom_ribbon(aes(ymin = log_no3_lo, ymax = log_no3_up, group = modelrun), fill = "grey70") +
+  geom_line(aes(color = modelrun)) +
+  facet_wrap(vars(modelrun))
+
+gg
+
+```
