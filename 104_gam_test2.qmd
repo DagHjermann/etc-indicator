@@ -7,9 +7,9 @@ format:
 editor: visual
 ---
 
--   Use model s(x,y) + s(year)  
--   Try using data for all Europe  
--   Use [soap-film smoother](https://fromthebottomoftheheap.net/2016/03/27/soap-film-smoothers/) for the spatial effect  
+-   Use model s(x,y) + s(year)\
+-   Try using data for all Europe\
+-   Use [soap-film smoother](https://fromthebottomoftheheap.net/2016/03/27/soap-film-smoothers/) for the spatial effect
 
 ```{r}
 
@@ -49,14 +49,17 @@ knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk
 dat <- readRDS("Input_data/WISE_GWNO3_sel2.rda") %>%
   mutate(log_no3 = log10(no3))
 
+# Locations  
+ <- dat %>% 
+  count(countryCode, monitoringSiteName, x, y)
+
 ```
 
+## 3. Test GAM with soap-film smoother
 
-## 3. Test GAM with soap-film smoother  
+### Test 1: example from GAM help pages
 
-### Test 1: example from GAM help pages      
-
-* Example from ?soap 
+-   Example from ?soap
 
 ```{r}
 
@@ -115,10 +118,10 @@ vis.gam(b,plot.type="contour")
 
 ```
 
-### Test 2: More realistic    
+### Test 2: More realistic
 
-* Example from soap() but setting the knots using Gavin's method      
-* https://fromthebottomoftheheap.net/2016/03/27/soap-film-smoothers/  
+-   Example from soap() but setting the knots using Gavin's method\
+-   https://fromthebottomoftheheap.net/2016/03/27/soap-film-smoothers/
 
 ```{r}
 #| results: hold
@@ -256,9 +259,7 @@ plot(mod) ## default plot
 
 ```
 
-
-
-### Test 3: prediction   
+### Test 3: prediction
 
 ```{r}
 
@@ -276,13 +277,13 @@ ggplot(pdata2, aes(v, w, color = y)) +
 
 ```
 
-## 4. Map data for land    
+## 4. Map data for land
 
-* Europe, land, from Natural Earth website  
-* Cropping data, parly manually to 
+-   Europe, land, from Natural Earth website\
+-   Cropping data, parly manually to
+
+### Original data, cropped  
 ```{r}
-
-# help(package = "terra")
 
 # SpatVector from file
 f <- "ne_50m_land/ne_50m_land.shp"
@@ -295,10 +296,25 @@ ex <- ext(-10, 50, 30, 73)
 boundary_land <- crop(boundary_land_all, ex)
 plot(boundary_land, main = "Original map (Mercator)")  
 
+
+```
+
+### Project to ETRS89  
+
+```{r}
+
+# help(package = "terra")
+
 # Project to ETRS89  
 crs_ETRS89_extended <- "+proj=lcc +lat_0=52 +lon_0=10 +lat_1=35 +lat_2=65 +x_0=4000000 +y_0=2800000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"
 boundary_land2 <- project(boundary_land, crs_ETRS89_extended)
 plot(boundary_land2, main = "Map in ETRS89 projection")  
+
+```
+
+### Create x,y coordinates in km  
+
+```{r}
 
 # Get coordinates  
 boundary_coord <- crds(boundary_land2, df = TRUE)
@@ -319,14 +335,21 @@ origo_coord <- crds(origo_point_t)
 boundary_coord$x <- (boundary_coord$x_orig - origo_coord[1,"x"])/1000
 boundary_coord$y <- (boundary_coord$y_orig - origo_coord[1,"y"])/1000
 
+```
+
+### Make final map  
+
+```{r}
+
 # Test plots
 if (FALSE){
-  plot(y~x, data = boundary_coord)
-  
+
   # IMPORTANT:
-  # For selectiong points for boundary_coord2 and boundary_coord3
+  # This plot is used for  selectiong points for boundary_coord2 and boundary_coord3
   plot(y~x, data = boundary_coord, type = "n")
   with(boundary_coord, text(x, y, 1:nrow(boundary_coord), col = "blue2", cex = 0.75))
+  points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+
 }
 
 # Europe with islands (points removed)
@@ -337,7 +360,13 @@ if (FALSE){
 }
 
 # Europe without islands (points along main coastline kept)
-boundary_coord3 <- boundary_coord[c(187:567, 586, 187),]
+boundary_coord3a <- boundary_coord[c(197:544),]
+boundary_coord3b <- data.frame(x = c(3761, 4803, 5320), y = c(2300, 2320, 1600))
+boundary_coord3c <- boundary_coord[c(197),]
+boundary_coord3 <- bind_rows(
+  boundary_coord3a,
+  boundary_coord3b,
+  boundary_coord3c)
 
 if (FALSE){
   plot(y~x, data = boundary_coord3, type = "n")
@@ -346,15 +375,161 @@ if (FALSE){
 
 plot(y~x, data = boundary_coord3, type = "l") 
 mtext("Map with ETRS89 in km, single simplified polygon")
+points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
 
 # saveRDS(boundary_coord3, "Data/104_boundary_coord3.rds")
 
 ```
 
+### Include Ireland and "land bridge"       
 
-## 5. Test GAM for one year, selected area    
+```{r}
 
-### Select data  
+# Function for "moving" coordinates (given by column names x,y bu default)
+move <- function(data, dx, dy, x="x", y="y"){
+  result <- data
+  result[,x] <- result[,x] + dx
+  result[,y] <- result[,y] + dy
+  result
+}
+# Test
+# boundary_coord[61:63, ]
+# boundary_coord[61:63, ] %>% move(100, -100)
+
+# "Extend" Ireland
+boundary_coord_ireland <- bind_rows(
+  boundary_coord[52, ] %>% move(30,-20),
+  boundary_coord[53:54, ],
+  boundary_coord[54, ] %>% move(-20, 60), 
+  # (skopping no 55)
+  boundary_coord[56:58, ] %>% move(-20, 50),
+  boundary_coord[59:60, ] ,
+  boundary_coord[61:63, ]  %>% move(30,-20)
+)
+
+if (FALSE){
+  # test plot
+  plot(y~x, data = boundary_coord_ireland, col = "purple") 
+  with(boundary_coord, text(x, y, 1:nrow(boundary_coord), col = "blue2", cex = 0.75))
+  points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+  lines(y~x, data = boundary_coord_ireland, col = "purple") 
+}
+
+#
+# Make "bridge to mainland"  
+#
+if (FALSE){
+  plot(y~x, data = boundary_coord3, type = "n")
+  with(boundary_coord3, text(x, y, 1:nrow(boundary_coord3), col = "blue2", cex = 0.75))
+  with(boundary_coord_ireland, text(x, y, 1:nrow(boundary_coord_ireland), col = "blue2", cex = 0.75))
+  points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+
+}
+
+boundary_coord4 <- bind_rows(
+  boundary_coord3[1:219,],
+  boundary_coord_ireland[1:11,],
+  boundary_coord3[220:352,]
+)
+
+plot(y~x, data = boundary_coord4, type = "l", col = "grey40")
+with(boundary_coord4, text(x, y, 1:nrow(boundary_coord4), col = "blue2", cex = 0.75))
+
+
+```
+
+
+### Include Danish islands     
+
+```{r}
+
+if (FALSE){
+  plot(y~x, data = boundary_coord4, type = "n", xlim = c(2200,3000), ylim = c(2200, 3200))
+  with(boundary_coord4, text(x, y, 1:nrow(boundary_coord4), col = "blue2", cex = 0.75))
+  points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+}
+
+boundary_coord5 <- bind_rows(
+  boundary_coord4[1:259,],
+  boundary_coord4[324,] %>% move(-5,0),
+  boundary_coord4[323,] %>% move(-10, 0),
+  boundary_coord4[268:270,] %>% move(20,30),
+  boundary_coord4[271:320,],
+  data.frame(x = c(2876, 2834), y = c(2620, 2620)),
+  boundary_coord4[322:nrow(boundary_coord4),]
+)
+
+if (F){
+  plot(y~x, data = boundary_coord4, type = "n", xlim = c(2200,3000), ylim = c(2200, 3200))
+  with(boundary_coord4, text(x, y, 1:nrow(boundary_coord4), col = "blue2", cex = 0.75))
+  points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+  lines(boundary_coord5$x, boundary_coord5$y, col = "purple")
+}
+
+# saveRDS(boundary_coord5, "Data/104_boundary_coord5.rds")
+  
+
+plot(y~x, data = boundary_coord5, type = "n")
+points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+lines(boundary_coord5$x, boundary_coord5$y, col = "purple")
+
+```
+
+### Remove Black Sea, include Mediterranean islands   
+```{r}
+
+if (FALSE){
+  # plot(y~x, data = boundary_coord5, type = "n", xlim = c(800,3200), ylim = c(700, 1900))
+  # plot(y~x, data = boundary_coord5, type = "n", xlim = c(3000, 5000), ylim = c(700, 1900))
+  plot(y~x, data = boundary_coord5, type = "n", xlim = c(2500, 5500), ylim = c(700, 2400))
+  # plot(y~x, data = boundary_coord5, type = "n")
+  with(boundary_coord5, text(x, y, 1:nrow(boundary_coord5), col = "blue2", cex = 0.75))
+  points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+}
+
+
+boundary_coord6 <- bind_rows(
+  boundary_coord5[1,],
+  data.frame(x = c(4709, 3965, 3000, 2404, 2072, 1783), 
+             y = c( 710,  609,  500,  872,  979,  884)),
+  boundary_coord5[179:nrow(boundary_coord5),]
+)
+
+boundary_coord6 <- bind_rows(
+  boundary_coord5[1,],
+  data.frame(x = c(4709, 3965, 3000, 2404, 2072, 1783), 
+             y = c( 710,  609,  500,  872,  979,  884)),
+  boundary_coord5[179:354,],
+  data.frame(x = c(3500, 4000, 4000, 5320),
+             y = c(2050, 2050, 1700, 1700)),
+  boundary_coord5[357:358,],
+)
+
+plot(y~x, data = boundary_coord6, type = "n")
+# plot(y~x, data = boundary_coord6, type = "n",  xlim = c(1500, 4200) + 1000, 
+#     ylim = c(400, 1900))
+points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+lines(boundary_coord6$x, boundary_coord6$y, col = "purple")
+
+# saveRDS(boundary_coord6, "Data/104_boundary_coord6.rds")
+
+```
+
+
+### Final map  
+```{r}
+
+plot(y~x, data = boundary_coord6, type = "n")
+points(dat_loc$x, dat_loc$y, pch = 4, cex = 0.5, col = "red3")
+lines(boundary_coord6$x, boundary_coord6$y, col = "purple")
+
+```
+
+
+## 5. Test GAM for one year, selected area
+
+### Select data
+
 ```{r}
 
 # 
@@ -366,31 +541,33 @@ dat2 <- dat %>% filter(countryCode %in% countries)
 
 dat3 <- dat2 %>% filter(year %in% 2020)  
 
-# plot(y~x, data = boundary_coord3, type = "l")  
+# plot(y~x, data = boundary_coord6, type = "l")  
 # points(y~x, dat3)
 
 ggplot(dat3, aes(x,y)) +
   geom_point(aes(color = log_no3)) +
   scale_color_viridis() +
-  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  annotate("path", x = boundary_coord6$x, y = boundary_coord6$y) +
   coord_fixed()  +
   theme_bw()
 
 
 ```
-###  Boundary  
+
+### Boundary
 
 ```{r}
 
 # Make fsb (list of lists)
-fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
+fsb <- list(list(v = boundary_coord6$x, w = boundary_coord6$y))
 
 ## plot boundary only
 # plot(fsb[[1]]$v, fsb[[1]]$w, type="l")
 # mtext("Boundary")
 
 ```
-### Remove outsiders from data  
+
+### Remove outsiders from data
 
 ```{r}
 
@@ -410,7 +587,7 @@ dat3_for_gam <- data.frame(v=v, w=w, y=y)
 
 ```
 
-###  Create knots   
+### Create knots
 
 ```{r}
 
@@ -448,34 +625,31 @@ sel <- inSide(fsb, x=v, y=w)
 
 ```
 
-### Adjust knots and run GAM  
+### Adjust knots  
 
-```{r}
+- 'weed_knots' performs the 'rinse and repeat' analysis done manually above  
+
+```{r}  
+#| error: false
+#| warning: false
+
+# NOTE: Code as above, including knots adjustment  
 
 # Make data frame for knots and start testing the GAM
 # - manual weeding must take place, rinse and repeat until the GAM works  
-knots <- data.frame(v = v[sel], w = w[sel])
-# After error in the gam: "knot 25 is on or outside boundary", add:
-knots <- knots[-1,]
-knots <- knots[-1,]
-knots <- knots[-11,]
-knots <- knots[-13,]
-knots <- knots[-19,]
-knots <- knots[-25,]
-knots <- knots[-25,]
-knots <- knots[-29,]
-knots <- knots[-36,]
-knots <- knots[-41,]
-knots <- knots[-44,]
-knots <- knots[-44,]
-knots <- knots[-51,]
-knots <- knots[-55,]
+knots_orig <- data.frame(v = v[sel], w = w[sel])
+
+# debugonce(weed_knots)
+knots <- weed_knots(knots_orig, dat3_for_gam)
 
 plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
 points(knots$v, knots$w, col = "grey50")
-text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+# text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
 mtext("Knots used in analysis")
 
+```
+
+```{r}
 
 # GAM - dimension of the PDE solution grid
 nmax <- 100 
@@ -491,35 +665,35 @@ plot(mod) ## default plot
 
 ```
 
+## 6. Test GAM for one year, all areas
 
+### Select data
 
-## 6. Test GAM for one year, all areas    
-
-### Select data  
 ```{r}
 
 dat2 <- dat
 
 dat3 <- dat2 %>% filter(year %in% 2020)  
 
-# plot(y~x, data = boundary_coord3, type = "l")  
+# plot(y~x, data = boundary_coord6, type = "l")  
 # points(y~x, dat3)
 
 ggplot(dat3, aes(x,y)) +
   geom_point(aes(color = log_no3)) +
   scale_color_viridis() +
-  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  annotate("path", x = boundary_coord6$x, y = boundary_coord6$y) +
   coord_fixed()  +
   theme_bw()
 
 
 ```
-###  Boundary  
+
+### Boundary
 
 ```{r}
 
 # Make fsb (list of lists)
-fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
+fsb <- list(list(v = boundary_coord6$x, w = boundary_coord6$y))
 
 ## plot boundary only
 # plot(fsb[[1]]$v, fsb[[1]]$w, type="l")
@@ -527,7 +701,7 @@ fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
 
 ```
 
-### Remove outsiders from data  
+### Remove outsiders from data
 
 ```{r}
 
@@ -548,13 +722,13 @@ dat3_for_gam <- data.frame(v=v, w=w, y=y)
 ggplot(dat3_for_gam, aes(v,w)) +
   geom_point(aes(color = y)) +
   scale_color_viridis() +
-  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  annotate("path", x = boundary_coord6$x, y = boundary_coord6$y) +
   coord_fixed()  +
   theme_bw()
 
 ```
 
-###  Create knots   
+### Create knots
 
 ```{r}
 
@@ -592,80 +766,153 @@ sel <- inSide(fsb, x=v, y=w)
 
 ```
 
-### Adjust knots and run GAM  
+### OLD: Adjust knots and run GAM
 
-* Rinse and repeat analysis in order to remove knots that stil are outside land  
-* As it needs to be run again and again, set k = 30 in the GAM until the knots are rinsed  
+- NOTE: Only included for possibly pedagogic reasons, now done using weed_knots()      
+- Rinse and repeat analysis in order to remove knots that stil are outside land\
+- As it needs to be run again and again, set k = 30 in the GAM until the knots are rinsed
 
 ```{r}
 
+if (FALSE){
+  
+  # Make data frame for knots and start testing the GAM
+  # - manual weeding must take place, rinse and repeat until the GAM works  
+  knots <- data.frame(v = v[sel], w = w[sel])
+  
+  # After error in the gam: "knot 6 is on or outside boundary", add:
+  knots <- knots[-6,]
+  # Run again, you will get a new error: "knot 11 is on or outside boundary", add:
+  knots <- knots[-11,]
+  # etc.
+  knots <- knots[-12,]
+  knots <- knots[-33,]
+  knots <- knots[-55,]
+  knots <- knots[-62,]
+  knots <- knots[-64,]
+  knots <- knots[-66,]
+  knots <- knots[-72,]
+  knots <- knots[-77,]
+  knots <- knots[-81,]
+  
+  # knots <- knots[-,]
+  
+  
+  plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+  points(knots$v, knots$w, col = "grey50")
+  text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+  mtext("Knots used in analysis")
+  
+  
+  # GAM - dimension of the PDE solution grid
+  nmax <- 100 
+  
+  # GAM with soap smoother
+  # Note that the names 'v' and 'w' must be the same for 3 objects: dat_test2, fsb and knots  
+  response <- try(gam(y ~ s(v, w, k=200, bs="so", 
+                            xt = list(bnd = fsb, nmax=nmax)),
+                      data = dat3_for_gam,
+                      knots=knots))
+  
+  # NOTE: should be able to make a function out of this by extracting knot nummber from "response"
+  #   using some regex code
+  
+}
+
+```
+
+### Adjust knots  
+
+- 'weed_knots' performs the 'rinse and repeat' analysis done manually above  
+
+```{r}  
+#| error: false
+#| warning: false
+
+# NOTE: Code as above, including knots adjustment  
+
 # Make data frame for knots and start testing the GAM
 # - manual weeding must take place, rinse and repeat until the GAM works  
-knots <- data.frame(v = v[sel], w = w[sel])
+knots_orig <- data.frame(v = v[sel], w = w[sel])
 
-# After error in the gam: "knot 4 is on or outside boundary", add:
-# After error in the gam: "knot 4 is on or outside boundary", add:
-knots <- knots[-4,]
-knots <- knots[-5,]
-knots <- knots[-10,]
-knots <- knots[-11,]
-knots <- knots[-32,]
-knots <- knots[-53,]
-knots <- knots[-73,]
-knots <- knots[-80,]
-knots <- knots[-88,]
+# debugonce(weed_knots)
+knots <- weed_knots(knots_orig, dat3_for_gam)
 
 plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
 points(knots$v, knots$w, col = "grey50")
-text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+# text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
 mtext("Knots used in analysis")
 
+```
 
-# GAM - dimension of the PDE solution grid
-nmax <- 100 
+### Adjust knots  
 
-# GAM with soap smoother
-# Note that the names 'v' and 'w' must be the same for 3 objects: dat_test2, fsb and knots  
+- 'weed_knots' performs the 'rinse and repeat' analysis done manually above  
+
+```{r}  
+#| error: false
+#| warning: false
+
+# NOTE: Code as above, including knots adjustment  
+
+# Make data frame for knots and start testing the GAM
+# - manual weeding must take place, rinse and repeat until the GAM works  
+knots_orig <- data.frame(v = v[sel], w = w[sel])
+
+# debugonce(weed_knots)
+knots <- weed_knots(knots_orig, dat3_for_gam)
+
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+points(knots$v, knots$w, col = "grey50")
+# text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+mtext("Knots used in analysis")
+
+```
+
+### Show model result    
+
+```{r}
+
 mod <- gam(y ~ s(v, w, k=200, bs="so", 
                xt = list(bnd = fsb, nmax=nmax)),
          data = dat3_for_gam,
          knots=knots)
 
-plot(mod) ## default plot
+plot(mod)
 
 ```
 
+## 7. GAM for all years, all areas
 
+### Select data
 
-## 7. GAM for all years, all areas    
-
-### Select data  
 ```{r}
 
 dat2 <- dat
 
 dat3 <- dat2  
 
-# plot(y~x, data = boundary_coord3, type = "l")  
+# plot(y~x, data = boundary_coord6, type = "l")  
 # points(y~x, dat3)
 
 ggplot(dat3, aes(x,y)) +
   geom_point(aes(color = log_no3)) +
   scale_color_viridis() +
-  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  annotate("path", x = boundary_coord6$x, y = boundary_coord6$y) +
   coord_fixed()  +
   theme_bw()
 
 
 ```
-###  Boundary  
+
+### Boundary
 
 ```{r}
 
 # NOTE: Code as above  
 
 # Make fsb (list of lists)
-fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
+fsb <- list(list(v = boundary_coord6$x, w = boundary_coord6$y))
 
 ## plot boundary only
 # plot(fsb[[1]]$v, fsb[[1]]$w, type="l")
@@ -673,7 +920,7 @@ fsb <- list(list(v = boundary_coord3$x, w = boundary_coord3$y))
 
 ```
 
-### Remove outsiders from data  
+### Remove outsiders from data
 
 ```{r}
 
@@ -697,13 +944,13 @@ dat3_for_gam <- data.frame(v=v, w=w, y=y, year = dat3$year[ind])
 ggplot(dat3_for_gam, aes(v,w)) +
   geom_point(aes(color = y)) +
   scale_color_viridis() +
-  annotate("path", x = boundary_coord3$x, y = boundary_coord3$y) +
+  annotate("path", x = boundary_coord6$x, y = boundary_coord6$y) +
   coord_fixed()  +
   theme_bw()
 
 ```
 
-###  Create knots   
+### Create knots
 
 ```{r}
 
@@ -742,57 +989,116 @@ mtext("Knots, before manual weeding")
 
 ```
 
-### Adjust knots and run GAM  
 
-* Rinse and repeat analysis in order to remove knots that stil are outside land  
-* As it needs to be run again and again, set k = 30 in the GAM until the knots are rinsed  
+### Function for adjusting knots   
+
+- Performs the rinse and repeat procedure done above  
 
 ```{r}
+
+weed_knots <- function(knots, data){
+  
+  # 'knots' is expected to be a dataframe with variables v and w  
+  # 'data' is expected to be a dataframe with variables v, w and y  
+  # 'fsb' is expected to exist (a list of lists, containing border info)   
+  
+  old.options <- options(show.error.messages = FALSE, warn = -1)
+
+  knot_error <- TRUE
+  
+  while (knot_error){
+    response <- try(
+      # The following gam is hard-coded - adjust depending on what you need
+      # The last time the gam will run (when the knots have been weeded so it actually works),
+      #   so a quite low k is suggested to save time  
+      gam(y ~ s(v, w, k=30, bs="so", 
+                xt = list(bnd = fsb, nmax=100)),
+          data = data,
+          knots=knots)
+    )
+    if (class(response) != "try-error"){
+      knot_error <- FALSE
+    } else {
+      knotno_char <- stringr::str_extract(response[1], "(?<=knot\\s)[0-9]+")
+      if (!is.na(knotno_char)){
+        knotno <- as.numeric(knotno_char)
+        knots <- knots[-knotno,]
+      } else {
+        knot_error <- FALSE  # it's an error, but not knot_error....
+      }
+    }
+  }
+  
+  options(old.options)
+  
+  knots
+
+}
+
+```
+
+### Adjust knots  
+
+- 'weed_knots' performs the 'rinse and repeat' analysis done manually above  
+
+```{r}  
+#| error: false
+#| warning: false
 
 # NOTE: Code as above, including knots adjustment  
 
 # Make data frame for knots and start testing the GAM
 # - manual weeding must take place, rinse and repeat until the GAM works  
-knots <- data.frame(v = v[sel], w = w[sel])
+knots_orig <- data.frame(v = v[sel], w = w[sel])
 
-# After error in the gam: "knot 4 is on or outside boundary", add:
-# After error in the gam: "knot 4 is on or outside boundary", add:
-knots <- knots[-1,]
-knots <- knots[-4,]
-knots <- knots[-11,]
-knots <- knots[-11,]
-knots <- knots[-12,]
-knots <- knots[-21,]
-knots <- knots[-44,]
-knots <- knots[-54,]
-knots <- knots[-102,]
-knots <- knots[-106,]
-# knots <- knots[-73,]
-# knots <- knots[-80,]
-# knots <- knots[-88,]
+# debugonce(weed_knots)
+knots <- weed_knots(knots_orig, dat3_for_gam)
+
+plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
+points(knots$v, knots$w, col = "grey50")
+# text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
+mtext("Knots used in analysis")
+
+```
+
+
+### Run model      
+
+```{r}
+
+mod <- gam(y ~ s(v, w, k=200, bs="so", 
+               xt = list(bnd = fsb, nmax=nmax)),
+         data = dat3_for_gam,
+         knots=knots)
+
+# Error in soap.basis(sd, x, y, film = TRUE, wiggly = TRUE, penalty = TRUE) : \n  NA/NaN/Inf in foreign function call (arg 13)\n  
+
+plot(mod)
+
+```
+
+### MAnual adjustment also needed  
+```{r}
 
 plot(fsb[[1]]$v, fsb[[1]]$w, type = "l", xlim = range(v), ylim = range(w))
 points(knots$v, knots$w, col = "grey50")
 text(knots$v, knots$w, 1:nrow(knots), col = "blue2")
 mtext("Knots used in analysis")
 
+knots <- knots[-11,]
 
-# GAM - dimension of the PDE solution grid
-nmax <- 100 
-
-# GAM with soap smoother
-# Ca. 2 minutes with k = 200  
-# Note that the names 'v' and 'w' must be the same for 3 objects: dat_test2, fsb and knots  
 mod <- gam(y ~ s(v, w, k=200, bs="so", 
                xt = list(bnd = fsb, nmax=nmax)),
          data = dat3_for_gam,
          knots=knots)
 
-plot(mod) ## default plot
+plot(mod)
 
 ```
 
-### With year effect  
+
+### With year effect
+
 ```{r}
 
 if (FALSE){
@@ -814,3 +1120,55 @@ plot(mod2) ## default plot
 
 ```
 
+
+```{r}
+
+dat3_loc <- dat3_for_gam %>%
+  
+
+```
+
+### Predikert  
+```{r}
+
+df_pred <- data.frame(v = 2000, w = 2000, year = 1992:2020)  
+pred <- predict(mod2, df_pred, se.fit = TRUE)
+
+df_pred$log_no3 <- pred$fit
+
+df_pred$no3 <- 10^pred$fit
+df_pred$no3_lo <- 10^(pred$fit - pred$se.fit)
+df_pred$no3_up <- 10^(pred$fit + pred$se.fit)
+
+ggplot(df_pred, aes(year, no3)) +
+  geom_ribbon(aes(ymin = no3_lo, ymax = no3_up), fill = "lightblue") +
+  geom_line()
+
+```
+
+
+### Year effect only
+
+```{r}
+
+mod3a <- gam(y ~ s(year, k = 5),
+              data = dat3_for_gam)
+plot(mod3a) 
+
+```
+```{r}
+
+visreg::visreg(mod3a)
+
+```
+
+### Year effect only
+
+```{r}
+
+mod3b <- gam(y ~ s(v, w, k=100) + s(year, k = 5),
+              data = dat3_for_gam)
+plot(mod3b) 
+
+
+```

@@ -1115,10 +1115,12 @@ plot(inside_polygon_rast)
 
 ```{r}
 
-# Also add 'values(test_rast)'  column to 'pdata_grid_diff'  
+# Also add 'values(inside_polygon_rast)'  column to 'pdata_grid_diff'  
 pdata_grid_diff <- pdata_grid_diff %>%
+  # Again, sorting correctly is very important (since we use 'values' function later):
   arrange(desc(y), x) %>%
-  mutate(inside = values(test_rast),
+  mutate(inside = values(inside_polygon_rast),
+         # If not inside polygon, set vaues to NA  
          log_no3_change = ifelse(inside == 1, log_no3_change, NA))
 
 # Test plot: change in NO3
