@@ -4,7 +4,7 @@ format:
   html:
     toc: true
     code-fold: true  
-editor: visual
+editor: source
 ---
 
 **Approach:**  
@@ -620,6 +620,8 @@ summary(m2)
 
 
 ```
+
+
 #### Test prediction  
 
 ```{r}
@@ -659,7 +661,9 @@ predict(m2, newdata = dat_test3)
 predict(m2, newdata = dat_test4)
 
 # For dat_test4
-dat_test4$fit <- predict(m2, newdata = dat_test4)
+pred_object <- predict(m2, newdata = dat_test4, se.fit = TRUE)
+dat_test4$fit <- pred_object$fit
+dat_test4$se.fit <- pred_object$se.fit
 dat_test4_mean <- dat_test4 %>%
   group_by(year) %>% summarize(fit = mean(fit))
 
@@ -668,7 +672,7 @@ ggplot(dat_test, aes(x = year, y = no3)) +
   labs(title = "Data")
 
 ggplot(dat_test4, aes(x = year, y = fit)) +
-  geom_point(aes(color = site_f)) +
+  geom_pointrange(aes(ymin = fit-2*se.fit, ymax = fit+2*se.fit, color = site_f)) +
   geom_point(data = dat_test4 %>% group_by(year) %>% summarize(fit = mean(fit))) +
   geom_line(data = dat_test4_mean) +
   labs(title = "Predictions (black dots are used for later spatial gam)", 
