@@ -1,0 +1,1298 @@
+---
+title: "120_gam_wb_level"
+format: 
+  html:
+    toc: true
+    code-fold: true  
+editor: visual
+---
+
+**Approach:** - Two-step approach: 1) independent analyses for each water body, then take results on to analysis of the entire area (European level)\
+- Motivation: - analyses should both take into account the information at the site level (within water bodies), but at the same time, water bodies are the proper unit for statistical analyses at the European level\
+- analyses of raw data (both within one water body, or at the European level) are susceptible to chnages in the sampling scheme. For instance, if sampling one year an onwards is extended to include sites with higher NO3 levels, this - Use model s(year) (w/ bootstrap?) for each water body - Then use use predictions from those to model s(x,y) + s(year)\
+- Use ordinary spatial thin-plate smooth, i.e. default version of s(x,y) instead of soap-film smoother - Using data for all Europe
+
+## 0. Settings
+
+```{r}
+
+rerun_gam_fitting1 <- FALSE
+rerun_gam_fitting2 <- FALSE
+rerun_gam_fitting3 <- FALSE
+rerun_gam_predictions <- FALSE
+
+```
+
+## 1. Packages
+
+```{r, include=FALSE}
+
+# Many of these packages cn be loaded at once using library(tidyverse). (I just like to be specific.)
+
+library(mgcv)        # gam 
+library(dplyr)       # tidyverse 
+library(ggplot2)     # tidyverse plots
+library(ggeasy)      # for use with ggplot 
+library(viridis)     # for scale_color_viridis  
+library(forcats)     # tidyverse
+library(purrr)       # tidyverse
+library(glue)        # tidyverse, easier alternative to paste0
+library(tictoc)      # tic() and toc() for timing   
+library(terra)       # spatial functions  
+
+country_borders <- readRDS("Input_data/country_borders.rda")
+
+```
+
+```{r}
+
+knitr::opts_chunk$set(results = 'hold') # collect the results from a chunk  
+
+```
+
+## 2. Data
+
+```{r}
+
+dat <- readRDS("Input_data/WISE_GWNO3_sel3.rda") %>%
+  mutate(log_no3 = log10(no3))
+
+nrow(dat)
+
+table(dat$sitegroup)
+
+dat %>%
+  distinct(site, sitegroup) %>%
+  count(sitegroup)
+
+```
+
+## 3. Map data for land
+
+### Europe, land, from Natural Earth website
+
+```{r}
+#| results: hide
+
+# help(package = "terra")
+
+# SpatVector from file
+f <- "ne_50m_land/ne_50m_land.shp"
+# f <- "ne_110m_land/ne_110m_land.shp"
+boundary_land_all <- vect(f)
+
+
+# crop with an extent
+ex <- ext(-10, 50, 30, 73)
+boundary_land <- crop(boundary_land_all, ex)
+
+if (FALSE)
+  plot(boundary_land, main = "Original map (Mercator)")  
+
+```
+
+### Project to ETRS89
+
+```{r}
+#| results: hide
+
+# Project to ETRS89  
+crs_ETRS89_extended <- "+proj=lcc +lat_0=52 +lon_0=10 +lat_1=35 +lat_2=65 +x_0=4000000 +y_0=2800000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"
+boundary_land2 <- project(boundary_land, crs_ETRS89_extended)
+
+if (FALSE)
+  plot(boundary_land2, main = "Map in ETRS89 projection")  
+
+```
+
+## 4. Map using data fram R's 'world' data
+
+-   See script 101
+
+### Select countries
+
+```{r}
+#| results: hide
+
+regions <- c("Portugal", "Iceland", "Ireland", "Spain", "UK",
+             "Isle of Man", "Guernsey", "Jersey", "Andorra", "France", "Belgium", 
+             "Netherlands", "Luxembourg", "Monaco", "Switzerland", "Liechtenstein", 
+             "Denmark", "Germany", "Italy", "San Marino", "Norway", 
+             "Vatican", "Austria", "Slovenia", "Sweden", "Czech Republic", 
+             "Malta", "Croatia", "Poland", "Bosnia and Herzegovina", "Slovakia", 
+             "Hungary", "Finland", "Montenegro", "Albania", "Serbia", "Kosovo", 
+             "Lithuania", "Estonia", "Latvia", "North Macedonia", "Romania", 
+             "Greece", "Belarus", "Bulgaria", "Moldova", "Ukraine", "Cyprus", 
+             "Turkey")
+
+country_borders <- readRDS("Input_data/country_borders.rda") %>%
+  filter(region %in% regions & !subregion %in% c("Svalbard", "Jan Mayen")) 
+
+# ggplot(country_borders %>% filter(region == "France"), aes(x,y)) +
+#   geom_path(aes(group = subregion))  
+
+if (FALSE)
+  ggplot(country_borders, aes(x,y)) + geom_path(aes(group = group))  
+
+# ALTERNATIVE: use data from Natueral Earth web site  
+# borders_all <- vect("ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp")
+# # Choose data based on "regions" vactor as defined above  
+# borders_european <- borders_all[borders_all$SOVEREIGNT %in% regions,]
+# plot(borders_european)
+
+```
+
+#### For making 'countries' vector above
+
+```{r}
+
+if (FALSE){
+  country_borders %>% 
+    filter(is.na(subregion)) %>%
+    group_by(region) %>%
+    summarise(across(c(x,y), mean)) %>%
+    filter(x > 0 & x < 5000 & y > 0 & y < 10000) %>%
+    ggplot(aes(x,y)) +
+    # geom_point() +
+    geom_text(aes(label = region))
+  
+  country_borders %>% 
+    filter(is.na(subregion)) %>%
+    group_by(region) %>%
+    summarise(across(c(x,y), mean)) %>%
+    filter(x > 0 & x < 5000 & y > 0 & y < 10000) %>%
+    arrange(x) %>%
+    pull(region) %>%
+    dput()
+}
+
+
+
+```
+
+### Show data
+
+```{r}
+
+ggplot(dat, aes(x,y)) +
+  geom_point(aes(color = log_no3)) +
+  scale_color_viridis() +
+  annotate("path", x = country_borders$x, y = country_borders$y, group = country_borders$group) +
+  coord_fixed()  +
+  theme_bw()
+
+```
+
+## 5. Data to use for predictions
+
+### Spatial grid before filtering, as data frame
+
+```{r}
+
+dx <- 50
+dy <- 50
+x_min <- dx*round(min(dat$x)/dx)
+x_max <- dx*round(max(dat$x)/dx)
+y_min <- dy*round(min(dat$y)/dy)
+y_max <- dy*round(max(dat$y)/dy)
+grid.x <- seq(x_min, x_max, by = dx)
+grid.y <- seq(y_min, y_max, by = dy)
+full_grid <- expand.grid(x = grid.x, y = grid.y)  
+
+full_grid <- full_grid %>%
+  # Add index (will be used for selecting data within country borders)
+  mutate(i = 1:nrow(full_grid)) %>%
+  # Sort rows - important, this is the same order as when we extract values from a raster object
+  arrange(desc(y), x)
+
+ggplot(full_grid, aes(x,y)) + 
+  geom_point(aes(color = i)) +
+  annotate("path", 
+           x = country_borders$x, 
+           y = country_borders$y, 
+           group = country_borders$group,
+           color = "red") +
+  coord_fixed()
+
+
+```
+
+### Convert data frame to raster
+
+```{r}
+
+# Make extent (vector of 4 values)  
+extent <- c(
+  min(full_grid$x) - dx/2, 
+  max(full_grid$x) + dx/2, 
+  min(full_grid$y) - dy/2, 
+  max(full_grid$y) + dy/2)
+
+# Make empty SpatRaster using 'terra::rast'
+full_raster <- rast(
+  ncol = length(unique(full_grid$x)), 
+  nrow = length(unique(full_grid$y)), 
+  xmin = extent[1], xmax = extent[2], 
+  ymin = extent[3], ymax = extent[4]) 
+
+# Set values of the SpatRaster
+values(full_raster) <- full_grid$i
+
+plot(full_raster)
+
+```
+
+### Select raster cells for a single country (example)
+
+```{r}
+
+borderdata <- subset(country_borders, region == "Switzerland")
+border_pol_data1 <- borderdata[,c("x","y")] %>% 
+  as.matrix()
+border_pol_data2 <-cbind(object=1, part=1, border_pol_data1, hole=0)
+border_pol <- vect(border_pol_data2, "polygons")
+
+# Extract values of the raster 'z' that overlaps with each of the two polygons 'v'   
+selected_i_values <- terra::extract(full_raster, border_pol)
+
+if (FALSE){
+  
+  # plot
+  ggplot(full_grid %>% filter(i %in% selected_i_values$lyr.1), aes(x,y)) + 
+    geom_point() +
+    annotate("path", x = country_borders$x, y = country_borders$y, group = country_borders$group,
+             color = "red")
+}
+
+  
+```
+
+### Function for selecting raster cells for a single area (example)
+
+```{r}
+
+get_rasterdata_within_border <- function(borderdata, raster_data){
+  
+  border_pol_data1 <- borderdata[,c("x","y")] %>% 
+    as.matrix()
+  border_pol_data2 <-cbind(object=1, part=1, border_pol_data1, hole=0)
+  border_pol <- vect(border_pol_data2, "polygons")
+
+  # Extract values of the raster 'z' that overlaps with each of the two polygons 'v'   
+  terra::extract(raster_data, border_pol)
+  
+}
+
+if (FALSE){
+  
+  # test
+  
+  i <- country_borders %>%
+    filter(region == "Switzerland") %>%
+    get_rasterdata_within_border(raster_data = full_raster)
+  
+  ggplot(full_grid %>% filter(i %in% selected_i_values$lyr.1), aes(x,y)) + 
+    geom_point() +
+    annotate("path", x = country_borders$x, y = country_borders$y, group = country_borders$group,
+             color = "red")
+  
+}
+  
+```
+
+### Select spatial points based on borders
+
+```{r}
+
+selected_i_values <- country_borders %>%
+  split(.$group) %>%
+  map_df(get_rasterdata_within_border, raster_data = full_raster)
+
+pdata_space <- full_grid %>% 
+  filter(i %in% selected_i_values$lyr.1)
+
+ggplot(pdata_space, aes(x,y)) + 
+  geom_point() +
+  annotate("path", 
+           x = country_borders$x, 
+           y = country_borders$y, 
+           group = country_borders$group,
+           color = "red") +
+  coord_fixed()
+
+```
+
+### Spatial grid, downsampled if necessary
+
+-   Not necessary! (so downsample has been set to false)
+
+```{r}
+
+# If you want to downsample the spatial grid  
+downsample <- TRUE
+downsample <- FALSE
+
+if (downsample){
+  
+  by = 4
+  
+  # Use a regular grid in space (e.g. every 4th point)
+  xs <- unique(pdata_space$x) %>% sort()
+  xs <- xs[seq(1,length(xs), by = by)]
+  ys <- unique(pdata_space$y) %>% sort()
+  ys <- ys[seq(1,length(ys), by = by)]
+  
+  pdata_space_s <- pdata_space %>%
+    filter(x %in% xs & y %in% ys)
+
+} else {
+  
+  pdata_space_s <- pdata_space
+  
+}
+
+```
+
+### Add years to grid data
+
+```{r}
+
+pdata_for_gam_allyrs <- pdata_space_s %>% mutate(year = 1992)
+
+for (yr in 1992:2020){
+  pdata_for_gam_allyrs <- bind_rows(pdata_for_gam_allyrs,
+                     pdata_space_s %>% mutate(year = yr)
+  )
+  
+}
+
+nrow(pdata_for_gam_allyrs)
+
+saveRDS(pdata_for_gam_allyrs, "Data/120_pdata_for_gam_allyrs.rds")
+
+# if you want to read this directly:
+# pdata_for_gam_allyrs <- readRDS("Data/120_pdata_for_gam_allyrs.rds")
+
+```
+
+## 6. Data summarized
+
+### Add gridcell to data
+
+```{r}
+
+dat <- dat %>%
+  mutate(
+    grid_x = dx*round(x/dx),
+    grid_y = dy*round(y/dy))
+
+```
+
+### Summarise data per 50 km squares
+
+```{r}
+
+# Already given above (part 5)
+# dx <- 50
+# dy <- 50
+
+dat_grid1 <- dat %>%
+  # Long-term data: use only sitegroup 1    
+  filter(sitegroup %in% 1) %>%
+  group_by(grid_x, grid_y, year) %>%
+  summarize(
+    across(log_no3, 
+           .fns = list(mean=mean, sd=sd, median=median, min=min, max=max)),
+    countryCode = paste(unique(countryCode), collapse = ", "),
+    n = n(),
+    n_site = length(unique(site)),
+    .groups = "drop"
+  ) %>%
+  rename(x = grid_x, y = grid_y)
+
+
+dat_grid2 <- dat %>%
+  # Short-term data: All data (no filter)  
+  group_by(x, y, year) %>%
+  group_by(grid_x, grid_y, year) %>%
+  summarize(
+    across(log_no3, 
+           .fns = list(mean=mean, sd=sd, median=median, min=min, max=max)),
+    countryCode = paste(unique(countryCode), collapse = ", "),
+    n = n(),
+    n_site = length(unique(site)),
+    .groups = "drop"
+  ) %>%
+  rename(x = grid_x, y = grid_y)
+
+
+dat_grid3 <- dat %>%
+  # Short-term data: All data (no filter)  
+  group_by(x, y, year) %>%
+  group_by(grid_x, grid_y, year) %>%
+  summarize(
+    across(log_no3, 
+           .fns = list(mean=mean, sd=sd, median=median, min=min, max=max)),
+    countryCode = paste(unique(countryCode), collapse = ", "),
+    n = n(),
+    n_site = length(unique(site)),
+    .groups = "drop"
+  ) %>%
+  rename(x = grid_x, y = grid_y)
+
+
+dat_grid2 <- dat %>%
+  # Short-term data: All data (no filter)  
+  group_by(x, y, year) %>%
+  group_by(grid_x, grid_y, year) %>%
+  summarize(
+    across(log_no3, 
+           .fns = list(mean=mean, sd=sd, median=median, min=min, max=max)),
+    countryCode = paste(unique(countryCode), collapse = ", "),
+    n = n(),
+    n_site = length(unique(site)),
+    .groups = "drop"
+  ) %>%
+  rename(x = grid_x, y = grid_y)
+
+
+dat_grid_nyears1 <- dat_grid1 %>%
+  count(x, y, name = "no_years")
+
+dat_grid_nyears2 <- dat_grid2 %>%
+  count(x, y, name = "no_years")
+
+
+```
+
+### Plots of year coverage
+
+```{r}
+
+bind_rows(
+  dat_grid_nyears1 %>% mutate(Groups = "1"),
+  dat_grid_nyears2 %>% mutate(Groups = "1-3")) %>%
+  mutate(no_years_b = cut(no_years, breaks = c(2,3,5,10,15,20,25,30), right = FALSE)) %>% 
+  ggplot(aes(x, y)) +
+  geom_raster(aes(fill = no_years_b)) +
+  scale_fill_viridis_d() +
+  coord_fixed() +
+  ggtitle("Number of years") +
+  facet_wrap(vars(Groups))
+  
+
+```
+
+## 7. GAM for each water body
+
+### Groups of sites
+
+-   Number of sites since 2000-
+
+```{r}
+#| fig-width: 9 
+#| fig-height: 9
+
+sitegroup_datasel <- list(
+  with(dat, year >= 2000 & sitegroup %in% 1),
+  with(dat, year >= 2000 & sitegroup %in% 2),
+  with(dat, year >= 2000 & sitegroup %in% 3)
+)
+
+# Only very few sata from sitegroup 3 are from before 2000:
+# with(dat, year >= 1992 & sitegroup %in% 3) %>% mean()
+# with(dat, year >= 2000 & sitegroup %in% 3) %>% mean()
+
+data_for_plot <- map_dfr(
+  sitegroup_datasel,
+  ~dat[.,] %>%
+    distinct(grid_x, grid_y, site) %>%
+    count(grid_x, grid_y, name = "n_sites"), 
+  .id = "Site_group")
+
+data_for_plot <- data_for_plot %>%
+  mutate(n_sites = cut(n_sites, breaks = c(1,2,3,5,10,50,100,250), right = FALSE))
+
+ggplot(data_for_plot, aes(grid_x, grid_y)) + 
+  geom_tile(aes(fill = n_sites)) +
+  scale_fill_viridis_d() +
+  coord_fixed(xlim = c(800, 4900), ylim = c(700,4200)) +
+  labs(title = "Number of sites by site group") +
+  geom_path(data = country_borders, aes(x,y,group = group)) +
+  facet_wrap(vars(Site_group), labeller = label_both) +
+  theme_bw() +
+  easy_remove_axes(what = c("text", "title"))
+
+```
+
+### Check 'waterbody'
+
+```{r}
+
+check <- dat %>%
+  distinct(waterbody, waterBodyIdentifierScheme) %>%
+  add_count(waterbody) %>%
+  filter(n > 1)
+
+if (nrow(check) > 0){
+  stop("Same 'waterbody' occurs for different 'waterBodyIdentifierScheme'")
+} else {
+  message("Names of 'waterbody' checked and are unique")
+}
+
+```
+
+### Data frame with one row per water body
+
+-   Run GAM for each water body with sitegroup 1 or 2
+
+```{r}
+
+df_wb <- dat %>%
+  group_by(countryCode, waterbody) %>%
+  summarize(
+    n_rows = length(site),
+    n_sites = length(unique(site)),
+    n_years = length(unique(year)),
+    group_1 = length(unique(site[sitegroup %in% 1])),
+    group_2 = length(unique(site[sitegroup %in% 2])),
+    group_3 = length(unique(site[sitegroup %in% 3])),
+    x = mean(x),
+    y = mean(y),
+    .groups = "drop"
+  )
+
+cat("nrow(df_wb):", nrow(df_wb), "\n")
+# summary(df_wb)
+
+
+
+```
+
+### Make site a factor variable
+
+```{r}
+
+# Add site_f 
+dat <- dat  %>%
+  mutate(site_f = factor(site))
+
+```
+
+### Testing (for a single water body)
+
+#### Test random intercept model
+
+-   http://www.let.rug.nl/wieling/statscourse/lecture3/#21
+
+```{r}
+
+dat_test <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042")
+
+cat("Number of years, site by sitegroup: \n")
+table(dat_test$site, dat_test$sitegroup)
+cat("Number of years, site by year: \n")
+table(dat_test$site, dat_test$year)
+
+m1 <- gam(log_no3 ~ s(year, k = 2), data = dat_test)
+m2 <- gam(log_no3 ~ s(year, k = 2) + s(site_f, bs = "re"), data = dat_test)
+
+cat("**********************************\nGAM model ignoring sites: \n")
+summary(m1)
+
+cat("**********************************\nGAM model with site as random factor (for the intercept): \n")
+summary(m2)
+# install.packages("itsadug")
+# library(itsadug)
+# plot_smooth(m1, view = "year", rug = F, main = "m1")
+# plot_smooth(m2, view = "year", rug = F, main = "m2", rm.ranef = T)
+
+
+```
+
+#### Test prediction
+
+```{r}
+
+# Remake same data as data used for fitting model   
+#   (gives identical results, i.e. the site levels are 'recognized')
+dat_test2 <- data.frame(
+  year = dat_test$year,
+  site = c(rep("DEGM_47361197", 6), rep("DEGM_46350111", 3))) %>%
+  mutate(
+    site_f = factor(site)
+)
+
+# As above, but use just one of the sites     
+dat_test3 <- data.frame(
+  year = dat_test$year,
+  site = rep("DEGM_47361197", 9)) %>%
+  mutate(
+    site_f = factor(site)
+)
+
+# As above, but use both sites for all years  
+sites <- unique(dat_test$site)  
+n_sites <- length(sites)
+years <- unique(dat_test$year)  
+n_years <- length(years)
+dat_test4 <- data.frame(
+  year = rep(years, n_sites),
+  site = rep(sites, each = n_years)) %>%
+  mutate(
+    site_f = factor(site)
+)
+
+predict(m2, newdata = dat_test)
+predict(m2, newdata = dat_test2)
+predict(m2, newdata = dat_test3)
+predict(m2, newdata = dat_test4)
+
+# For dat_test4
+dat_test4$fit <- predict(m2, newdata = dat_test4)
+dat_test4_mean <- dat_test4 %>%
+  group_by(year) %>% summarize(fit = mean(fit))
+
+ggplot(dat_test, aes(x = year, y = log_no3)) +
+  geom_point(aes(color = site_f)) +
+  labs(title = "Data")
+
+ggplot(dat_test4, aes(x = year, y = fit)) +
+  geom_point(aes(color = site_f)) +
+  geom_point(data = dat_test4 %>% group_by(year) %>% summarize(fit = mean(fit))) +
+  geom_line(data = dat_test4_mean) +
+  labs(title = "Predictions (black dots are used for later spatial gam)", 
+       subtitle = "Including year x site combinations with no data. ") 
+
+
+```
+
+### Function: run GAM
+
+-   Runs GAM with random site effect\
+-   Runs gam only, and returns the model object
+
+```{r}
+
+#
+# NOTE: 'dat' is a global object here 
+#
+run_gam_1 <- function(wb, sitegroups){
+  data_sel <- dat %>% 
+    filter(waterbody %in% wb & sitegroup %in% sitegroups)
+  n_year <- length(unique(data_sel$year))
+  k_max <- min(n_year - 2, 8)
+  k_max <- max(k_max, 3)
+  if (length(unique(data_sel$site)) > 1){
+    gam(log_no3 ~ s(year, k = k_max) + s(site_f, bs = "re"), 
+        data = data_sel)
+  } else {
+    gam(log_no3 ~ s(year, k = k_max), data = data_sel)
+  }
+}
+
+if (FALSE){
+  
+  m1 <- run_gam_1("DEGB_DEST_SAL-GW-042", 1:3) 
+  predict(m1)
+  # yrs <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% pull(year)
+  # predict(m1, data.frame(year = yrs))
+  
+  # m1 <- run_gam_1("DK1-15-2-8-SVENDBORGOEST") 
+
+}
+
+
+```
+
+### Function for getting predictions
+
+-   Make predictions for all years and all sites (also non-existing year\*site combinations)
+
+```{r}
+
+#
+# data for the as input object 
+get_predictions <- function(model, data){
+  
+  waterbody <- unique(data$waterbody)
+  if (length(waterbody) > 1)
+    stop("More than one waterbody!")
+  sites <- unique(data$site)  
+  n_sites <- length(sites)
+  years <- unique(data$year)  
+  n_years <- length(years)
+  data_pred <- data.frame(
+    waterbody = waterbody,
+    year = rep(years, n_sites),
+    site = rep(sites, each = n_years)) %>%
+    mutate(
+      site_f = factor(site)
+    )
+  data_pred$fit <- predict(model, newdata = data_pred)
+  data_pred
+  
+}
+
+
+m2 <- gam(log_no3 ~ s(year, k = 3) + s(site_f, bs = "re"), data = dat_test)  
+pred_test <- get_predictions(model = m2, data = dat_test)
+str(pred_test)
+
+```
+
+### Function: run GAM, get predicted values
+
+-   Runs GAM with random site effect\
+-   Make predictions for all years and all sites (also non-existing year\*site combinations)
+-   for the "mean site" in all years
+
+```{r}
+
+run_gam_2 <- function(wb, sitegroups, years){
+  data_sel <- dat %>% 
+    filter(waterbody %in% wb,
+           sitegroup %in% sitegroups,
+           year %in% years)
+  n_year <- length(unique(data_sel$year))
+  k_max <- min(n_year - 2, 8)
+  k_max <- max(k_max, 3)
+  if (length(unique(data_sel$site)) > 1){
+    mod <- gam(log_no3 ~ s(year, k = k_max) + s(site_f, bs = "re"), 
+        data = data_sel)
+    result <- get_predictions(model = mod, data = data_sel)
+  } else {
+    mod <- gam(log_no3 ~ s(year, k = k_max), data = data_sel)
+    result <- get_predictions(model = mod, data = data_sel)
+  }
+  result
+}
+
+if (FALSE){
+  df_pred <- run_gam_2("DEGB_DEST_SAL-GW-042", 1:3, years = 1992:2020)
+  nrow(df_pred)
+  df_pred <- run_gam_2("DEGB_DEST_SAL-GW-042", 1:2, years = 1992:2020)
+  nrow(df_pred)
+  df_pred <- run_gam_2("DEGB_DEST_SAL-GW-042", 1:3, years = 2000:2020)
+  nrow(df_pred)
+  # debugonce(get_predictions)
+  df_pred <- run_gam_2("DEGB_DEMV_WP_WA_3")
+  # yrs <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% pull(year)
+  # predict(m1, data.frame(year = yrs))
+  
+  df_pred <- run_gam_2("DK1-15-2-8-SVENDBORGOEST") 
+
+}
+
+
+```
+
+### Preparations
+
+-   Make 'safe' function\
+-   Get selections of water bodies
+
+```{r}
+
+# run_gam <- safely(run_gam_1)
+run_gam <- safely(run_gam_2)
+
+wbs <- list(
+  df_wb %>% filter(group_1 > 0) %>% pull(waterbody),
+  df_wb %>% filter(group_1 > 0 | group_2 > 0 ) %>% pull(waterbody),  # Water body must have 
+  df_wb %>% filter(group_1 > 0 | group_2 > 0 ) %>% pull(waterbody),
+  df_wb %>% filter(group_1 > 0) %>% pull(waterbody)
+)
+
+```
+
+### Test running several WBs
+
+```{r}
+
+if (TRUE){
+  
+  set.seed(10)
+  wbs_test <- sample(wbs[[2]], 100)  
+  
+  #
+  # Groups 1-3
+  #
+  tic()
+  # mod_orig <- purrr::map(wbs_test, run_gam)
+  res_orig <- purrr::map(wbs_test, run_gam, sitegroups = 1:3, years = 1991:2020)
+  toc()   # 100 WBs = 8.3 sec
+  
+  res <- transpose(res_orig)
+  ok <- map_lgl(res$error, is.null)  
+  # ok
+  
+  res_df <- bind_rows(res_orig[ok])
+  nrow(res_df)
+  
+  #
+  # Groups 1-2
+  #
+  res_orig <- purrr::map(wbs_test, run_gam, sitegroups = 1:2, years = 1991:2020)
+  toc()   # 100 WBs = 8.3 sec
+  
+  res <- transpose(res_orig)
+  ok <- map_lgl(res$error, is.null)  
+  # ok
+  
+  res_df <- bind_rows(res_orig[ok])
+  nrow(res_df)
+  
+}
+
+
+```
+
+### Check of means
+
+```{r}
+
+dat %>%
+  summarize(no3 = 10^mean(log_no3))
+
+dat %>%
+  summarize(no3 = mean(10^log_no3),
+            no3_med = median(10^log_no3))
+
+dat %>%
+  group_by()
+  summarize(no3 = 10^mean(log_no3))
+
+```
+
+### Run all WBs
+
+```{r}
+
+if (rerun_gam_fitting1){
+  
+  tic()
+  res_orig <- list()
+  res_orig[[1]] <- purrr::map(wbs[[1]], run_gam, sitegroups = 1, years = 1991:2020)
+  res_orig[[2]] <- purrr::map(wbs[[2]], run_gam, sitegroups = 1:3, years = 2000:2020)
+  res_orig[[3]] <- purrr::map(wbs[[3]], run_gam, sitegroups = 1:2, years = 2000:2020)
+  res_orig[[4]] <- purrr::map(wbs[[4]], run_gam, sitegroups = 1, years = 2000:2020)
+  toc()   # 640 sec
+  
+  get_wb_bysite <- function(result_orig){
+    result <- transpose(result_orig)
+    ok <- map_lgl(result$error, is.null)  
+    bind_rows(result$result[ok])
+  }
+  
+  get_wb_means <- function(result_orig, metadata_waterbody){
+    result <- transpose(result_orig)
+    ok <- map_lgl(result$error, is.null)  
+    bind_rows(result$result[ok]) %>%
+      group_by(waterbody, year) %>%
+      summarize(log_no3 = mean(fit), .groups = "drop") %>%
+      left_join(metadata_waterbody %>% select(waterbody, x, y, sitegroup),
+                by = "waterbody")
+  }
+  
+  dat_wb_bysite <- purrr::map(res_orig, get_wb_bysite)
+  dat_wb_means <- purrr::map(res_orig, get_wb_means, metadata_waterbody = df_wb)
+  
+  names(dat_wb_means) <- c("Since 1992, site group 1",
+                           "Since 2000, site group 1-3",
+                           "Since 2000, site group 1-2",
+                           "Since 2000, site group 1")
+  
+  saveRDS(dat_wb_bysite, "Data/120_dat_wb_bysite.rds")
+  saveRDS(dat_wb_means, "Data/120_dat_wb_means.rds")
+  # saveRDS(res_orig, "Data/120_res_orig.rds")
+  
+}
+
+dat_wb_means <- readRDS("Data/120_dat_wb_means.rds")  
+
+
+```
+
+```{r}
+
+#
+# Test area 
+#
+
+if (FALSE){
+  
+  "DEGB_DEST_SAL-GW-042" %in% wbs[[1]]
+  "DEGB_DEST_SAL-GW-042" %in% wbs[[2]]
+  which(wbs[[2]] %in% "DEGB_DEST_SAL-GW-042")
+  res_orig[[2]][[661]]$result
+  get_wb_bysite
+  
+  dat_wb_bysite[[2]]
+  
+  dat_wb_bysite[[2]] %>% # View()
+    filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% View()
+  dat_wb_means[[2]] %>% # View()
+    filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% View()
+  
+}
+
+```
+
+## 8. GAM, space x time interaction
+
+-   Interactive effects of space and time\
+-   Based on the independently modelled data
+
+### Running GAMs
+
+-   4 runs (model fits/predictions) for different datasets/time ranges\
+-   1992 onwards (run 1) or 2000 onwards (run 2-4)
+
+```{r}
+
+
+if (rerun_gam_fitting2){
+# if(TRUE) {
+  
+  # For some reason, this doesn't seem to work:
+  # mod <- purrr::map(
+  #   run_datasel, ~gam(log_no3 ~ s(x, y, year, k=600), data = dat[.,]))
+  # (neither does a for-next loop)
+  
+  tic()
+  mod1 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[1]])
+  saveRDS(mod1, "Data/120_mod1.rds")
+  mod2 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[2]])
+  saveRDS(mod2, "Data/120_mod2.rds")
+  mod3 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[3]])
+  saveRDS(mod3, "Data/120_mod3.rds")
+  mod4 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[4]])
+  saveRDS(mod4, "Data/120_mod4.rds")
+  toc() # 122 sec  
+
+}
+
+# Read saved data  
+mod1 <- readRDS("Data/120_mod1.rds")
+mod2 <- readRDS("Data/120_mod2.rds")
+mod3 <- readRDS("Data/120_mod3.rds")
+mod4 <- readRDS("Data/120_mod4.rds")
+
+# Put in list and remove the single models
+mod <- list(mod1, mod2, mod3, mod4)
+names(mod) <- names(dat_wb_means)
+
+rm(mod1, mod2, mod3, mod4)
+
+# plot(mod1) ## default plot
+# plot(mod2) ## default plot
+
+```
+
+### Summary of model
+
+```{r}
+
+summary.mini <- function(modelnumber, model_list){
+  model <- model_list[[modelnumber]]
+  cat(names(model_list)[modelnumber], "\n")
+  summ <- summary(model)
+  cat("Sample size:", summ$n, "\n")
+  print(summ$s.table)
+  cat("Deviance explained:", summ$dev.expl, "\n\n")
+}
+
+walk(1:length(mod), summary.mini, model_list = mod)
+
+```
+
+### Predicted values for input data
+
+-   For the input data (the smoothed WB data 'pred_by_wb')\
+-   Not including years with no data for the given WB
+    -   In other words: only using existing combinations of year and water body\
+-   NOTE: for that reason, heavily affected by WBs coming in later in the process
+
+```{r}
+
+# Get predictions from spatial model   
+tic()
+pred_by_wb <- purrr::map(mod, predict)
+toc()
+
+# Add predictions to data  
+dat_wb_means <- purrr::map2(dat_wb_means, pred_by_wb, ~mutate(.x, modelfit = .y))
+
+```
+
+#### Plot year effect
+
+```{r}
+
+# Change of predicted values      
+
+get_modelfit_byyear <- function(data_with_fit){
+  yearmod <- gam(modelfit ~ s(year, k = 8), data = data_with_fit)  
+  # yearmod <- gam(no3_fit ~ s(year, k = 8), data = data_with_fit %>% mutate(no3_fit = 10^modelfit))  
+  yearmod_pred = data.frame(year = seq(min(data_with_fit$year), 2020))
+  fit_object <- predict(yearmod, newdata = yearmod_pred, se.fit = TRUE)
+  yearmod_pred %>%
+    mutate(fit = fit_object$fit,
+           se.fit = fit_object$se.fit)
+}
+
+dat_year_fit <- map_dfr(dat_wb_means, get_modelfit_byyear, .id = "Model run")
+
+ggplot(dat_year_fit, aes(year, fit, group = `Model run`)) +
+  geom_ribbon(aes(ymin = fit - 2*se.fit, ymax = fit + 2*se.fit), fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = `Model run`)) +
+  theme_bw()
+
+ggplot(dat_year_fit, aes(year, fit, group = `Model run`)) +
+  geom_ribbon(aes(ymin = fit - 2*se.fit, ymax = fit + 2*se.fit, fill = `Model run`), alpha = 0.3) +
+  geom_line(aes(color = `Model run`)) +
+  theme_bw()
+
+```
+
+```{r}
+
+#
+# Test area  
+#
+
+if (FALSE){
+  
+m1 <- gam(modelfit ~ s(year, k = 8), data = dat_wb_means[[1]])  
+plot(m1)  
+
+ggplot(get_modelfit_byyear(dat_wb_means[[1]]), aes(year, fit)) +
+  geom_ribbon(aes(ymin = fit - 2*se.fit, ymax = fit + 2*se.fit), fill = "lightblue") +
+  geom_line()
+
+}
+
+```
+
+### Predicted values for all years
+
+-   For all water bodies and all years (for the given run)\
+-   Should be little affected by WBs coming in later in the process
+
+```{r}
+#| cache: true
+
+get_fit_allyears <- function(data, model){
+  wbs <- unique(data$waterbody)  
+  n_wbs <- length(wbs)
+  years <- seq(min(data$year), max(data$year))  
+  n_years <- length(years)
+  newdata = data.frame(
+    waterbody = rep(wbs, each = n_years),
+    year = rep(years, length = n_wbs)
+  ) %>%
+    left_join(df_wb %>% select(waterbody, x, y)) 
+  fit_object <- predict(model, newdata=newdata, se.fit = TRUE)
+  newdata %>%
+    mutate(spatialfit = fit_object$fit,
+           se.spatialfit = fit_object$se.fit)
+}
+
+# tic()
+# test <- get_fit_allyears(dat_wb_means[[1]], mod[[1]])
+# toc()
+
+tic()
+dat_wb_fit_allyrs <- purrr::map2(dat_wb_means, mod, get_fit_allyears)
+toc()  # 53 sec  
+# names(dat_wb_fit_allyrs_list)   
+
+# dat_wb_fit_allyrs <- bind_rows(dat_wb_fit_allyrs_list, .id = "modelrun")
+
+```
+
+#### Plot year effect
+
+```{r}
+
+get_modelfit_byyear <- function(data_with_fit){
+  yearmod <- gam(spatialfit ~ s(year, k = 8), data = data_with_fit)  
+  # yearmod <- gam(no3_fit ~ s(year, k = 8), data = data_with_fit %>% mutate(no3_fit = 10^spatialfit))  
+  yearmod_pred = data.frame(year = seq(min(data_with_fit$year), 2020))
+  fit_object <- predict(yearmod, newdata = yearmod_pred, se.fit = TRUE)
+  yearmod_pred %>%
+    mutate(yearfit = fit_object$fit,
+           se.yearfit = fit_object$se.fit)
+}
+
+dat_year_fit <- map_dfr(dat_wb_fit_allyrs, get_modelfit_byyear, .id = "modelrun") %>%
+  mutate(
+    yearfit_lo = yearfit - 2*se.yearfit,
+    yearfit_up = yearfit + 2*se.yearfit,
+    yearfit_back = 10^yearfit,
+    yearfit_back_lo = 10^yearfit_lo,
+    yearfit_back_up = 10^yearfit_up
+  )
+
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  labs(y = "log10(NO3 conc.)") +
+  theme_bw()
+
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  labs(y = "log10(NO3 conc.)") +
+  facet_wrap(vars(modelrun))
+
+```
+
+#### Plot year effect, back-transformed to ordinary scale
+
+```{r}
+
+ggplot(dat_year_fit, aes(year, yearfit_back, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_back_lo, ymax = yearfit_back_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  labs(y = "NO3 conc.") +
+  theme_bw()
+
+ggplot(dat_year_fit, aes(year, yearfit_back, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_back_lo, ymax = yearfit_back_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  labs(y = "NO3 conc.") +
+  facet_wrap(vars(modelrun))
+
+```
+
+#### Plot year effect, back-transformed before gam
+
+```{r}
+
+get_modelfit_byyear <- function(data_with_fit){
+  # yearmod <- gam(spatialfit ~ s(year, k = 8), data = data_with_fit)  
+  yearmod <- gam(no3_fit ~ s(year, k = 8), data = data_with_fit %>% mutate(no3_fit = 10^spatialfit))  
+  yearmod_pred = data.frame(year = seq(min(data_with_fit$year), 2020))
+  fit_object <- predict(yearmod, newdata = yearmod_pred, se.fit = TRUE)
+  yearmod_pred %>%
+    mutate(yearfit = fit_object$fit,
+           se.yearfit = fit_object$se.fit)
+}
+
+dat_year_fit <- map_dfr(dat_wb_fit_allyrs, get_modelfit_byyear, .id = "modelrun") %>%
+  mutate(
+    yearfit_lo = yearfit - 2*se.yearfit,
+    yearfit_up = yearfit + 2*se.yearfit,
+    yearfit_back = 10^yearfit,
+    yearfit_back_lo = 10^yearfit_lo,
+    yearfit_back_up = 10^yearfit_up
+  )
+
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  labs(y = "log10(NO3 conc.)") +
+  theme_bw()
+
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  labs(y = "log10(NO3 conc.)") +
+  facet_wrap(vars(modelrun))
+
+```
+
+## 9. GAM, time + random effect for waterbody
+
+-   4 runs (model fits/predictions) for different datasets/time ranges\
+-   1992 onwards (run 1) or 2000 onwards (run 2-4)
+
+### Fit model
+
+```{r}
+
+if (rerun_gam_fitting3){
+# if(TRUE) {
+  
+  # For some reason, this doesn't seem to work:
+  # mod <- purrr::map(
+  #   run_datasel, ~gam(log_no3 ~ s(x, y, year, k=600), data = dat[.,]))
+  # (neither does a for-next loop)
+  
+  tic()
+  df <- dat_wb_means[[1]] %>% mutate(waterbody_f = factor(waterbody))
+  modr1 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  df <- dat_wb_means[[2]] %>% mutate(waterbody_f = factor(waterbody))
+  modr2 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  df <- dat_wb_means[[3]] %>% mutate(waterbody_f = factor(waterbody))
+  modr3 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  df <- dat_wb_means[[4]] %>% mutate(waterbody_f = factor(waterbody))
+  modr4 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  toc() # 370 sec  
+
+  modr <- list(modr1,modr2,modr3,modr4)
+  names(modr) <- names(dat_wb_means)
+  
+  saveRDS(modr, "Data/120_modr_list.rds")
+
+}
+
+# Put in list and remove the single models
+tic()
+modr <- readRDS("Data/120_modr_list.rds")
+toc()  
+
+```
+
+#### Get year effect data
+
+-   Using 'plot_smooth' in R package 'itsadug'
+
+```{r}
+#| results: hide  
+
+if (!"itsadug" %in% installed.packages())
+  install.packages("itsadug")
+
+library(itsadug)
+plotdata_time_effect_list <- purrr::map(modr, plot_smooth, view = "year", 
+                                        rug = F, 
+                                        main = "GAM for time (random effect for waterbody removed)", 
+                                        rm.ranef = TRUE)
+
+```
+
+#### Plot year effect
+
+```{r}
+
+plotdata_time_effect <- map_dfr(plotdata_time_effect_list, "fv",  .id = "modelrun")
+
+ggplot(plotdata_time_effect, aes(year, fit, group = modelrun)) +
+  geom_line(aes(color = modelrun)) +
+  theme_bw()
+
+ggplot(plotdata_time_effect, aes(year, fit, group = modelrun)) +
+  geom_ribbon(aes(ymin = ll, ymax = ul), fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  theme_bw()
+
+ggplot(plotdata_time_effect, aes(year, fit)) +
+  geom_ribbon(aes(ymin = ll, ymax = ul), fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(vars(modelrun))
+
+
+```
