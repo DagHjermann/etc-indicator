@@ -1,5 +1,5 @@
 ---
-title: "108_gam_wb_level"
+title: "120_gam_wb_level"
 format: 
   html:
     toc: true
@@ -7,7 +7,11 @@ format:
 editor: visual
 ---
 
--   Split anaøysis in analyses on Water body level and full analysis  
+**Approach:**
+-   Two-step approach: 1) independent analyses for each water body, then take results on to analysis of the entire area (European level)  
+- Motivation: 
+    - analyses should both take into account the information at the site level (within water bodies), but at the same time, water bodies are the proper unit for statistical analyses at the European level  
+    - analyses of raw data (both within one water body, or at the European level) are susceptible to chnages in the sampling scheme. For instance, if sampling one year an onwards is extended to include sites with higher NO3 levels, this 
 -   Use model s(year) (w/ bootstrap?) for each water body 
 -   Then use use predictions from those to model s(x,y) + s(year)     
 -   Use ordinary spatial thin-plate smooth, i.e. default version of s(x,y) instead of soap-film smoother
@@ -16,7 +20,9 @@ editor: visual
 ## 0. Settings  
 ```{r}
 
-rerun_gam_fitting <- FALSE
+rerun_gam_fitting1 <- FALSE
+rerun_gam_fitting2 <- FALSE
+rerun_gam_fitting3 <- FALSE
 rerun_gam_predictions <- FALSE
 
 ```
@@ -71,6 +77,7 @@ dat %>%
 ### Europe, land, from Natural Earth website
 
 ```{r}
+#| results: hide
 
 # help(package = "terra")
 
@@ -83,20 +90,23 @@ boundary_land_all <- vect(f)
 # crop with an extent
 ex <- ext(-10, 50, 30, 73)
 boundary_land <- crop(boundary_land_all, ex)
-plot(boundary_land, main = "Original map (Mercator)")  
 
-
+if (FALSE)
+  plot(boundary_land, main = "Original map (Mercator)")  
 
 ```
 
 ### Project to ETRS89
 
 ```{r}
+#| results: hide
 
 # Project to ETRS89  
 crs_ETRS89_extended <- "+proj=lcc +lat_0=52 +lon_0=10 +lat_1=35 +lat_2=65 +x_0=4000000 +y_0=2800000 +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs +type=crs"
 boundary_land2 <- project(boundary_land, crs_ETRS89_extended)
-plot(boundary_land2, main = "Map in ETRS89 projection")  
+
+if (FALSE)
+  plot(boundary_land2, main = "Map in ETRS89 projection")  
 
 ```
 
@@ -107,6 +117,7 @@ plot(boundary_land2, main = "Map in ETRS89 projection")
 ### Select countries
 
 ```{r}
+#| results: hide
 
 regions <- c("Portugal", "Iceland", "Ireland", "Spain", "UK",
              "Isle of Man", "Guernsey", "Jersey", "Andorra", "France", "Belgium", 
@@ -125,8 +136,8 @@ country_borders <- readRDS("Input_data/country_borders.rda") %>%
 # ggplot(country_borders %>% filter(region == "France"), aes(x,y)) +
 #   geom_path(aes(group = subregion))  
 
-ggplot(country_borders, aes(x,y)) +
-  geom_path(aes(group = group))  
+if (FALSE)
+  ggplot(country_borders, aes(x,y)) + geom_path(aes(group = group))  
 
 # ALTERNATIVE: use data from Natueral Earth web site  
 # borders_all <- vect("ne_50m_admin_0_countries/ne_50m_admin_0_countries.shp")
@@ -364,10 +375,10 @@ for (yr in 1992:2020){
 
 nrow(pdata_for_gam_allyrs)
 
-saveRDS(pdata_for_gam_allyrs, "Data/108_pdata_for_gam_allyrs.rds")
+saveRDS(pdata_for_gam_allyrs, "Data/120_pdata_for_gam_allyrs.rds")
 
 # if you want to read this directly:
-# pdata_for_gam_allyrs <- readRDS("Data/108_pdata_for_gam_allyrs.rds")
+# pdata_for_gam_allyrs <- readRDS("Data/120_pdata_for_gam_allyrs.rds")
 
 ```
 
@@ -518,8 +529,10 @@ ggplot(data_for_plot, aes(grid_x, grid_y)) +
   scale_fill_viridis_d() +
   coord_fixed(xlim = c(800, 4900), ylim = c(700,4200)) +
   labs(title = "Number of sites by site group") +
+  geom_path(data = country_borders, aes(x,y,group = group)) +
   facet_wrap(vars(Site_group), labeller = label_both) +
-  easy_remove_axes(what = "title")
+  theme_bw() +
+  easy_remove_axes(what = c("text", "title"))
 
 ```
 
@@ -541,7 +554,7 @@ if (nrow(check) > 0){
 ```
 ### Data frame with one row per water body  
 
-* Includes 
+* Run GAM for each water body with sitegroup 1 or 2   
 
 ```{r}
 
@@ -554,17 +567,19 @@ df_wb <- dat %>%
     group_1 = length(unique(site[sitegroup %in% 1])),
     group_2 = length(unique(site[sitegroup %in% 2])),
     group_3 = length(unique(site[sitegroup %in% 3])),
+    x = mean(x),
+    y = mean(y),
     .groups = "drop"
   )
 
-nrow(df_wb)
-summary(df_wb)
+cat("nrow(df_wb):", nrow(df_wb), "\n")
+# summary(df_wb)
 
 
 
 ```
 
-### Run GAM for each water body with sitegroup 1 or 2  
+### Make site a factor variable  
 
 ```{r}
 
@@ -574,7 +589,9 @@ dat <- dat  %>%
 
 ```
 
-### Test random intercept model  
+### Testing (for a single water body) 
+
+#### Test random intercept model  
 
 * http://www.let.rug.nl/wieling/statscourse/lecture3/#21  
 
@@ -582,35 +599,98 @@ dat <- dat  %>%
 
 dat_test <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042")
 
-# dat_test <- dat %>% filter(waterbody %in% "DK1-15-2-8-SVENDBORGOEST")
-xtabs(~site, dat_test)
-xtabs(~year, dat_test)
+cat("Number of years, site by sitegroup: \n")
+table(dat_test$site, dat_test$sitegroup)
+cat("Number of years, site by year: \n")
+table(dat_test$site, dat_test$year)
 
 m1 <- gam(log_no3 ~ s(year, k = 2), data = dat_test)
 m2 <- gam(log_no3 ~ s(year, k = 2) + s(site_f, bs = "re"), data = dat_test)
+
+cat("**********************************\nGAM model ignoring sites: \n")
 summary(m1)
+
+cat("**********************************\nGAM model with site as random factor (for the intercept): \n")
 summary(m2)
 # install.packages("itsadug")
-library(itsadug)
-plot_smooth(m1, view = "year", rug = F, main = "m1")
-plot_smooth(m2, view = "year", rug = F, main = "m2", rm.ranef = T)
+# library(itsadug)
+# plot_smooth(m1, view = "year", rug = F, main = "m1")
+# plot_smooth(m2, view = "year", rug = F, main = "m2", rm.ranef = T)
+
 
 ```
-
-### Function for running GAM with random site effect  
+#### Test prediction  
 
 ```{r}
 
-df_wb_sel <- df_wb %>%
-  filter(group_1 > 0 | group_2 > 0)
+# Remake same data as data used for fitting model   
+#   (gives identical results, i.e. the site levels are 'recognized')
+dat_test2 <- data.frame(
+  year = dat_test$year,
+  site = c(rep("DEGM_47361197", 6), rep("DEGM_46350111", 3))) %>%
+  mutate(
+    site_f = factor(site)
+)
 
-quantile(df_wb_sel$n_years)
+# As above, but use just one of the sites     
+dat_test3 <- data.frame(
+  year = dat_test$year,
+  site = rep("DEGM_47361197", 9)) %>%
+  mutate(
+    site_f = factor(site)
+)
 
-wbs <- pull(df_wb_sel, waterbody)
-length(wbs)
+# As above, but use both sites for all years  
+sites <- unique(dat_test$site)  
+n_sites <- length(sites)
+years <- unique(dat_test$year)  
+n_years <- length(years)
+dat_test4 <- data.frame(
+  year = rep(years, n_sites),
+  site = rep(sites, each = n_years)) %>%
+  mutate(
+    site_f = factor(site)
+)
 
-run_gam_1 <- function(wb){
-  data_sel <- dat %>% filter(waterbody %in% wb)
+predict(m2, newdata = dat_test)
+predict(m2, newdata = dat_test2)
+predict(m2, newdata = dat_test3)
+predict(m2, newdata = dat_test4)
+
+# For dat_test4
+dat_test4$fit <- predict(m2, newdata = dat_test4)
+dat_test4_mean <- dat_test4 %>%
+  group_by(year) %>% summarize(fit = mean(fit))
+
+ggplot(dat_test, aes(x = year, y = log_no3)) +
+  geom_point(aes(color = site_f)) +
+  labs(title = "Data")
+
+ggplot(dat_test4, aes(x = year, y = fit)) +
+  geom_point(aes(color = site_f)) +
+  geom_point(data = dat_test4 %>% group_by(year) %>% summarize(fit = mean(fit))) +
+  geom_line(data = dat_test4_mean) +
+  labs(title = "Predictions (black dots are used for later spatial gam)", 
+       subtitle = "Including year x site combinations with no data. ") 
+
+
+```
+
+
+
+### Function: run GAM
+
+* Runs GAM with random site effect  
+* Runs gam only, and returns the model object  
+
+```{r}
+
+#
+# NOTE: 'dat' is a global object here 
+#
+run_gam_1 <- function(wb, sitegroups){
+  data_sel <- dat %>% 
+    filter(waterbody %in% wb & sitegroup %in% sitegroups)
   n_year <- length(unique(data_sel$year))
   k_max <- min(n_year - 2, 8)
   k_max <- max(k_max, 3)
@@ -624,126 +704,259 @@ run_gam_1 <- function(wb){
 
 if (FALSE){
   
-  m1 <- run_gam_1("DEGB_DEST_SAL-GW-042") 
+  m1 <- run_gam_1("DEGB_DEST_SAL-GW-042", 1:3) 
   predict(m1)
   # yrs <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% pull(year)
   # predict(m1, data.frame(year = yrs))
   
-  m1 <- run_gam_1("DK1-15-2-8-SVENDBORGOEST") 
+  # m1 <- run_gam_1("DK1-15-2-8-SVENDBORGOEST") 
 
 }
 
 
 ```
 
-### Test running several WBs   
+### Function for getting predictions
+
+* Make predictions for all years and all sites (also non-existing year*site combinations)
+
 ```{r}
 
-run_gam <- safely(run_gam_1)
+#
+# data for the as input object 
+get_predictions <- function(model, data){
+  
+  waterbody <- unique(data$waterbody)
+  if (length(waterbody) > 1)
+    stop("More than one waterbody!")
+  sites <- unique(data$site)  
+  n_sites <- length(sites)
+  years <- unique(data$year)  
+  n_years <- length(years)
+  data_pred <- data.frame(
+    waterbody = waterbody,
+    year = rep(years, n_sites),
+    site = rep(sites, each = n_years)) %>%
+    mutate(
+      site_f = factor(site)
+    )
+  data_pred$fit <- predict(model, newdata = data_pred)
+  data_pred
+  
+}
 
-set.seed(10)
-wbs_test <- sample(wbs, 100)  
 
-tic()
-mod_orig <- purrr::map(wbs_test, run_gam)
-toc()
+m2 <- gam(log_no3 ~ s(year, k = 3) + s(site_f, bs = "re"), data = dat_test)  
+pred_test <- get_predictions(model = m2, data = dat_test)
+str(pred_test)
 
-mod <- transpose(mod_orig)
+```
 
-ok <- map_lgl(mod$error, is.null)  
-# ok
+### Function: run GAM, get predicted values  
 
+* Runs GAM with random site effect  
+* Make predictions for all years and all sites (also non-existing year*site combinations)
+* for the "mean site" in all years
 
-# df_wb %>% filter(waterbody %in% wbs_test[!ok]) %>% View()
+```{r}
+
+run_gam_2 <- function(wb, sitegroups, years){
+  data_sel <- dat %>% 
+    filter(waterbody %in% wb,
+           sitegroup %in% sitegroups,
+           year %in% years)
+  n_year <- length(unique(data_sel$year))
+  k_max <- min(n_year - 2, 8)
+  k_max <- max(k_max, 3)
+  if (length(unique(data_sel$site)) > 1){
+    mod <- gam(log_no3 ~ s(year, k = k_max) + s(site_f, bs = "re"), 
+        data = data_sel)
+    result <- get_predictions(model = mod, data = data_sel)
+  } else {
+    mod <- gam(log_no3 ~ s(year, k = k_max), data = data_sel)
+    result <- get_predictions(model = mod, data = data_sel)
+  }
+  result
+}
+
+if (FALSE){
+  df_pred <- run_gam_2("DEGB_DEST_SAL-GW-042", 1:3, years = 1992:2020)
+  nrow(df_pred)
+  df_pred <- run_gam_2("DEGB_DEST_SAL-GW-042", 1:2, years = 1992:2020)
+  nrow(df_pred)
+  df_pred <- run_gam_2("DEGB_DEST_SAL-GW-042", 1:3, years = 2000:2020)
+  nrow(df_pred)
+  # debugonce(get_predictions)
+  df_pred <- run_gam_2("DEGB_DEMV_WP_WA_3")
+  # yrs <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% pull(year)
+  # predict(m1, data.frame(year = yrs))
+  
+  df_pred <- run_gam_2("DK1-15-2-8-SVENDBORGOEST") 
+
+}
 
 
 ```
+
+
+### Preparations  
+
+* Make 'safe' function   
+* Get selections of water bodies  
+
+```{r}
+
+# run_gam <- safely(run_gam_1)
+run_gam <- safely(run_gam_2)
+
+wbs <- list(
+  df_wb %>% filter(group_1 > 0) %>% pull(waterbody),
+  df_wb %>% filter(group_1 > 0 | group_2 > 0 ) %>% pull(waterbody),  # Water body must have 
+  df_wb %>% filter(group_1 > 0 | group_2 > 0 ) %>% pull(waterbody),
+  df_wb %>% filter(group_1 > 0) %>% pull(waterbody)
+)
+
+```
+
+
+### Test running several WBs   
+```{r}
+
+if (TRUE){
+  
+  set.seed(10)
+  wbs_test <- sample(wbs[[2]], 100)  
+  
+  #
+  # Groups 1-3
+  #
+  tic()
+  # mod_orig <- purrr::map(wbs_test, run_gam)
+  res_orig <- purrr::map(wbs_test, run_gam, sitegroups = 1:3, years = 1991:2020)
+  toc()   # 100 WBs = 8.3 sec
+  
+  res <- transpose(res_orig)
+  ok <- map_lgl(res$error, is.null)  
+  # ok
+  
+  res_df <- bind_rows(res_orig[ok])
+  nrow(res_df)
+  
+  #
+  # Groups 1-2
+  #
+  res_orig <- purrr::map(wbs_test, run_gam, sitegroups = 1:2, years = 1991:2020)
+  toc()   # 100 WBs = 8.3 sec
+  
+  res <- transpose(res_orig)
+  ok <- map_lgl(res$error, is.null)  
+  # ok
+  
+  res_df <- bind_rows(res_orig[ok])
+  nrow(res_df)
+  
+}
+
+
+```
+### Check of means  
+
+```{r}
+
+dat %>%
+  summarize(no3 = 10^mean(log_no3))
+
+dat %>%
+  summarize(no3 = mean(10^log_no3),
+            no3_med = median(10^log_no3))
+
+dat %>%
+  group_by()
+  summarize(no3 = 10^mean(log_no3))
+
+```
+
 
 ### Run all WBs    
 
 ```{r}
 
-if (rerun_gam_fitting){
+if (rerun_gam_fitting1){
   
   tic()
-  mod_orig <- purrr::map(wbs, run_gam)
-  toc()   # 174 sec
+  res_orig <- list()
+  res_orig[[1]] <- purrr::map(wbs[[1]], run_gam, sitegroups = 1, years = 1991:2020)
+  res_orig[[2]] <- purrr::map(wbs[[2]], run_gam, sitegroups = 1:3, years = 2000:2020)
+  res_orig[[3]] <- purrr::map(wbs[[3]], run_gam, sitegroups = 1:2, years = 2000:2020)
+  res_orig[[4]] <- purrr::map(wbs[[4]], run_gam, sitegroups = 1, years = 2000:2020)
+  toc()   # 640 sec
   
-  saveRDS(mod_orig, "Data/120_mod_orig.rds")
-
+  get_wb_bysite <- function(result_orig){
+    result <- transpose(result_orig)
+    ok <- map_lgl(result$error, is.null)  
+    bind_rows(result$result[ok])
+  }
+  
+  get_wb_means <- function(result_orig, metadata_waterbody){
+    result <- transpose(result_orig)
+    ok <- map_lgl(result$error, is.null)  
+    bind_rows(result$result[ok]) %>%
+      group_by(waterbody, year) %>%
+      summarize(log_no3 = mean(fit), .groups = "drop") %>%
+      left_join(metadata_waterbody %>% select(waterbody, x, y, sitegroup),
+                by = "waterbody")
+  }
+  
+  dat_wb_bysite <- purrr::map(res_orig, get_wb_bysite)
+  dat_wb_means <- purrr::map(res_orig, get_wb_means, metadata_waterbody = df_wb)
+  
+  names(dat_wb_means) <- c("Since 1992, site group 1",
+                           "Since 2000, site group 1-3",
+                           "Since 2000, site group 1-2",
+                           "Since 2000, site group 1")
+  
+  saveRDS(dat_wb_bysite, "Data/120_dat_wb_bysite.rds")
+  saveRDS(dat_wb_means, "Data/120_dat_wb_means.rds")
+  # saveRDS(res_orig, "Data/120_res_orig.rds")
+  
 }
 
-mod_orig <- readRDS("Data/120_mod_orig.rds")  
-
-mod <- transpose(mod_orig)
-
-ok <- map_lgl(mod$error, is.null)  
-mean(ok)
-length(ok)
-
-wbs_sel <- wbs[ok]
+dat_wb_means <- readRDS("Data/120_dat_wb_means.rds")  
 
 
 ```
-### Predictions  
+
+ 
 ```{r}
 
-if (rerun_gam_predictions){
+#
+# Test area 
+#
+
+if (FALSE){
   
+  "DEGB_DEST_SAL-GW-042" %in% wbs[[1]]
+  "DEGB_DEST_SAL-GW-042" %in% wbs[[2]]
+  which(wbs[[2]] %in% "DEGB_DEST_SAL-GW-042")
+  res_orig[[2]][[661]]$result
+  get_wb_bysite
   
+  dat_wb_bysite[[2]]
+  
+  dat_wb_bysite[[2]] %>% # View()
+    filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% View()
+  dat_wb_means[[2]] %>% # View()
+    filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% View()
   
 }
 
 ```
 
 
-## 7. GAM, interactive effects of space and time
+## 8. GAM, space x time interaction    
 
-
-
-### Datasets for each run  
-
-* Make a list of boolean vectors, one for each run  
-
-```{r}
-#| fig-width: 9 
-#| fig-height: 9
-
-run_datasel <- list(
-  with(dat, year >= 1992 & sitegroup %in% 1),
-  with(dat, year >= 2000 & sitegroup %in% c(1,2,3)),
-  with(dat, year >= 2000 & sitegroup %in% c(1,2)),
-  with(dat, year >= 2000 & sitegroup %in% c(1))
-)
-names(run_datasel) <- c("Since 1992, site group 1",
-                   "Since 2000, site group 1-3",
-                   "Since 2000, site group 1-2",
-                   "Since 2000, site group 1")
-
-# Only very few sata from sitegroup 3 are from before 2000:
-# with(dat, year >= 1992 & sitegroup %in% 3) %>% mean()
-# with(dat, year >= 2000 & sitegroup %in% 3) %>% mean()
-
-dat_grid_nsites <- map_dfr(
-  run_datasel,
-  ~dat[.,] %>%
-    distinct(grid_x, grid_y, site) %>%
-    count(grid_x, grid_y, name = "n_sites"), 
-  .id = "Modelrun")
-
-dat_grid_nsites %>%
-  mutate(n_sites_b = cut(n_sites, breaks = c(1,2,3,5,10,50,100,250), 
-                         right = FALSE)) %>%
-  ggplot(aes(grid_x, grid_y)) + 
-  geom_tile(aes(fill = n_sites_b)) +
-  scale_fill_viridis_d() +
-  coord_fixed(xlim = c(800, 4900), ylim = c(700,4200)) +
-  labs(title = "Number of sites by model run") +
-  facet_wrap(vars(Modelrun)) +
-  easy_remove_axes(what = "title")
-
-```
-
+* Interactive effects of space and time  
+* Based on the independently modelled data  
 
 ### Running GAMs
 
@@ -753,7 +966,7 @@ dat_grid_nsites %>%
 ```{r}
 
 
-if (rerun_gam_fitting){
+if (rerun_gam_fitting2){
 # if(TRUE) {
   
   # For some reason, this doesn't seem to work:
@@ -762,27 +975,27 @@ if (rerun_gam_fitting){
   # (neither does a for-next loop)
   
   tic()
-  mod1 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat[run_datasel[[1]],])
-  saveRDS(mod1, "Data/108_mod1.rds")
-  mod2 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat[run_datasel[[2]],])
-  saveRDS(mod2, "Data/108_mod2.rds")
-  mod3 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat[run_datasel[[3]],])
-  saveRDS(mod3, "Data/108_mod3.rds")
-  mod4 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat[run_datasel[[4]],])
-  saveRDS(mod4, "Data/108_mod4.rds")
-  toc()
+  mod1 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[1]])
+  saveRDS(mod1, "Data/120_mod1.rds")
+  mod2 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[2]])
+  saveRDS(mod2, "Data/120_mod2.rds")
+  mod3 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[3]])
+  saveRDS(mod3, "Data/120_mod3.rds")
+  mod4 <- gam(log_no3 ~ s(x, y, year, k=600), data = dat_wb_means[[4]])
+  saveRDS(mod4, "Data/120_mod4.rds")
+  toc() # 122 sec  
 
 }
 
 # Read saved data  
-mod1 <- readRDS("Data/108_mod1.rds")
-mod2 <- readRDS("Data/108_mod2.rds")
-mod3 <- readRDS("Data/108_mod3.rds")
-mod4 <- readRDS("Data/108_mod4.rds")
+mod1 <- readRDS("Data/120_mod1.rds")
+mod2 <- readRDS("Data/120_mod2.rds")
+mod3 <- readRDS("Data/120_mod3.rds")
+mod4 <- readRDS("Data/120_mod4.rds")
 
 # Put in list and remove the single models
 mod <- list(mod1, mod2, mod3, mod4)
-names(mod) <- names(run_datasel)
+names(mod) <- names(dat_wb_means)
 
 rm(mod1, mod2, mod3, mod4)
 
@@ -808,585 +1021,295 @@ walk(1:length(mod), summary.mini, model_list = mod)
 
 ```
 
-## 8. Prediction on grid
+### Predicted values for input data     
 
-### Prediction data  
-```{r}
+* For the input data (the smoothed WB data 'pred_by_wb')     
+* Not including years with no data for the given WB     
+    - In other words: only using existing combinations of year and water body   
+* NOTE: for that reason, heavily affected by WBs coming in later in the process  
 
-# dat[.,] contains only grid cells with data
-# so pdata_space_byruns (list of 4) will also only contain grid cells with data
-pdata_space_byruns <- purrr::map(
-  run_datasel,
-  ~distinct(dat[.,], grid_x, grid_y)
-)
+```{r}  
 
-expand_grid_with_years <-function(griddata, years){
-  map_dfr(years, 
-          ~mutate(griddata, year = .) %>% 
-            rename(x = grid_x, y = grid_y))
-} 
+# Get predictions from spatial model   
+tic()
+pred_by_wb <- purrr::map(mod, predict)
+toc()
 
-# test <- expand_grid_with_years(pdata_space_byruns[[1]], 1992:2020)
-# nrow(pdata_space_byruns[[1]])
-# nrow(test)
-# nrow(test)/29
-
-# Data for all grid cells with data, and all years 
-#  (note: all years for all grid cells, even when that cell x year combination is lacking)
-pdata_byruns <- purrr::map2(
-  pdata_space_byruns,
-  list(1992:2020, 2000:2020, 2000:2020, 2000:2020),
-  expand_grid_with_years
-)
+# Add predictions to data  
+dat_wb_means <- purrr::map2(dat_wb_means, pred_by_wb, ~mutate(.x, modelfit = .y))
 
 ```
 
+####  Plot year effect  
 
-### Calculate predicted values
+```{r}  
 
-```{r}
+# Change of predicted values      
 
-if (rerun_gam_predictions){
-# if (TRUE){
-  
-  # test for 100 data points
-  # i <- 1
-  # test <- predict(mod[[i]], newdata = pdata_byruns[[i]][1:100,], se.fit = TRUE)
-  
-  tic()
-  
-  pred <- purrr::map2(
-    mod,
-    pdata_byruns,
-    ~ predict(.x, newdata = .y, se.fit = TRUE)
-  )
-
-  pdata <- purrr::map2(
-    pred,
-    pdata_byruns,
-    ~ mutate(
-      .y, 
-      log_no3 = as.numeric(.x$fit),
-      log_no3_se = as.numeric(.x$se.fit))
-  )
-  
-
-  # 101 sec 
-  toc()
-  
-  saveRDS(pdata, "Data/108_mod_pred_grid.rds")
-
+get_modelfit_byyear <- function(data_with_fit){
+  yearmod <- gam(modelfit ~ s(year, k = 8), data = data_with_fit)  
+  # yearmod <- gam(no3_fit ~ s(year, k = 8), data = data_with_fit %>% mutate(no3_fit = 10^modelfit))  
+  yearmod_pred = data.frame(year = seq(min(data_with_fit$year), 2020))
+  fit_object <- predict(yearmod, newdata = yearmod_pred, se.fit = TRUE)
+  yearmod_pred %>%
+    mutate(fit = fit_object$fit,
+           se.fit = fit_object$se.fit)
 }
 
-if (FALSE){
-  
-  pdata1 <- pdata_for_gam %>%
-    mutate(
-      log_no3 = as.numeric(pred1$fit),
-      log_no3_se = as.numeric(pred1$se.fit)
-    )
-  pdata2 <- pdata_for_gam %>%
-    filter(year >= 2000) %>%
-    mutate(
-      log_no3 = as.numeric(pred2$fit),
-      log_no3_se = as.numeric(pred2$se.fit)
-    )
-  pdata3 <- pdata_for_gam %>%
-    filter(year >= 2000) %>%
-    mutate(
-      log_no3 = as.numeric(pred3$fit),
-      log_no3_se = as.numeric(pred3$se.fit)
-    )
-  pdata4 <- pdata_for_gam %>%
-    filter(year >= 2000) %>%
-    mutate(
-      log_no3 = as.numeric(pred4$fit),
-      log_no3_se = as.numeric(pred4$se.fit)
-    )
-  
-  # Add number of years with data from sitegroup = 1, and keep only cells with data 
-  pdata1 <- pdata1 %>%
-    left_join(dat_grid_nyears1, by = c("x","y"))
-  pdata1$log_no3[is.na(pdata1$no_years)] <- NA
-  
-  # Add number of years with data from sitegroup = 1-3, and keep only cells with data 
-  pdata2 <- pdata2 %>%
-    left_join(dat_grid_nyears2, by = c("x","y"))
-  pdata2$log_no3[is.na(pdata2$no_years)] <- NA
-  
-  # Add number of years with data from sitegroup = 1, and keep only cells with data 
-  pdata3 <- pdata3 %>%
-    left_join(dat_grid_nyears3, by = c("x","y"))
-  pdata3$log_no3[is.na(pdata3$no_years)] <- NA
-  
-  # Add number of years with data from sitegroup = 1, and keep only cells with data 
-  pdata4 <- pdata4 %>%
-    left_join(dat_grid_nyears4, by = c("x","y"))
-  pdata4$log_no3[is.na(pdata4$no_years)] <- NA
-  
-  saveRDS(pdata1, "Data/108_mod1_pred_grid.rds")
-  saveRDS(pdata2, "Data/108_mod2_pred_grid.rds")
-  saveRDS(pdata3, "Data/108_mod3_pred_grid.rds")
-  saveRDS(pdata4, "Data/108_mod4_pred_grid.rds")
+dat_year_fit <- map_dfr(dat_wb_means, get_modelfit_byyear, .id = "Model run")
 
-}
+ggplot(dat_year_fit, aes(year, fit, group = `Model run`)) +
+  geom_ribbon(aes(ymin = fit - 2*se.fit, ymax = fit + 2*se.fit), fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = `Model run`)) +
+  theme_bw()
 
-# pdata1 <- readRDS("Data/108_mod1_pred_grid.rds")
-# pdata2 <- readRDS("Data/108_mod2_pred_grid.rds")
-# pdata3 <- readRDS("Data/108_mod3_pred_grid.rds")
-# pdata4 <- readRDS("Data/108_mod4_pred_grid.rds")
-
-# pdata <- list(pdata1, pdata2, pdata3, pdata4)
-# names(pdata) <- paste("Model run", 1:length(pdata))
-
-pdata <- readRDS("Data/108_mod_pred_grid.rds")
-names(pdata)
+ggplot(dat_year_fit, aes(year, fit, group = `Model run`)) +
+  geom_ribbon(aes(ymin = fit - 2*se.fit, ymax = fit + 2*se.fit, fill = `Model run`), alpha = 0.3) +
+  geom_line(aes(color = `Model run`)) +
+  theme_bw()
 
 ```
-### Dataframe for selected years 
-
-```{r}
-
-pdata_selyr <- map_dfr(1:4, 
-                         ~mutate(pdata[[.]], modelrun = .) %>%
-                           filter(year %in% c(2000,2020))
-)
-
-```
-
-#### Plot on log scale  
-```{r}
-#| fig-width: 9
-#| fig-height: 4
-
-
-gg <- ggplot(pdata_selyr, aes(x,y)) +
-    geom_tile(aes(fill = log_no3),) +
-    scale_fill_viridis_c(limits = c(-2.5, 2.2)) +
-    # scale_fill_viridis_c(limits = c(-2,2.5)) +
-    coord_fixed() +
-    facet_grid(vars(year), vars(modelrun)) +
-    labs(title = "Predicted NO3 concentrations, log10 scale") +
-  easy_remove_axes(what = "title")
-
-gg
-
-  
-```
-
-#### Plot on natural scale 
-
-```{r}
-#| fig-width: 9
-#| fig-height: 4
-
-# range(10^pdata_selyr$log_no3)
-
-gg <- pdata_selyr %>%
-  mutate(
-    no3 = 10^log_no3,
-    no3_b = cut(no3, breaks = c(0, 0.2, 1, 2.5, 5, 10, 25, 100, 500))
-  ) %>%
-  ggplot(aes(x,y)) +
-    geom_tile(aes(fill = no3_b),) +
-    scale_fill_viridis_d() +
-    coord_fixed() +
-    facet_grid(vars(year), vars(modelrun)) +
-    labs(title = "Predicted NO3 concentrations, log10 scale") +
-  easy_remove_axes(what = "title")
-
-gg
-
-  
-```
-
-
-### Change since reference period   
-
-* NO3 values in the reference period are set to 100    
-* Difference is on ordinary scale (not on log-scale)    
-* Reference period is [1992,1997) and [1997,2002) for mod1 and mod2 
-
-```{r}
-
-pdata_change <- left_join(
-  pdata_selyr %>% 
-    filter(year == 2020),
-  pdata_selyr %>% 
-    filter(year == 2000) %>%
-    rename(log_no3_ref = log_no3) %>%
-    select(x, y, modelrun, log_no3_ref), 
-  by = c("x", "y", "modelrun")
-) %>%
-  mutate(
-    log_no3_change = log_no3 - log_no3_ref,
-    no3_rel = (10^log_no3_change)*100
-  )
-
-nrow(pdata_selyr)
-nrow(pdata_change)
-
-```
-#### Plot on log scale  
-
-```{r}
-#| fig-width: 9
-#| fig-height: 9
-
-# range(pdata_change$log_no3_change)
-
-gg <- ggplot(pdata_change, aes(x,y)) +
-  geom_tile(aes(fill = log_no3_change),) +
-  scale_fill_viridis_c(limits = c(-1, 2)) +
-  coord_fixed() +
-  facet_wrap(vars(modelrun), ncol = 2) +
-  labs(title = "Predicted change in log10(NO3)") +
-  easy_remove_axes(what = "title")
-
-gg
-
-  
-```
-
-
-#### Plot relative change  
-
-```{r}
-#| fig-width: 9
-#| fig-height: 9
-
-# range(pdata_change$no3_rel)
-
-cols <- RColorBrewer::brewer.pal(11, "RdYlBu") %>% head(9) %>% rev()
-
-gg <- pdata_change %>%
-  mutate(
-    no3_rel_b = cut(
-      no3_rel, 
-      breaks = c(10, 25, 50, 80, 120, 150, 200, 500, 1000, 5000))
-  ) %>%
-  ggplot(aes(x,y)) +
-  geom_tile(aes(fill = no3_rel_b),) +
-  # scale_fill_viridis_d() +
-  scale_fill_manual(values = cols) +
-  coord_fixed() +
-  facet_wrap(vars(modelrun), ncol = 2) +
-  labs(title = "Predicted change in log10(NO3)") +
-  easy_remove_axes(what = "title")
-
-gg
-
-
-```
-
-```{r}
-
-#| fig-width: 9
-#| fig-height: 4
-
-# range(10^pdata_selyr$log_no3)
-
-gg <- pdata_selyr %>%
-  mutate(
-    no3 = 10^log_no3,
-    no3_b = cut(no3, breaks = c(0, 0.2, 1, 2.5, 5, 10, 25, 100, 500))
-  ) %>%
-  ggplot(aes(x,y)) +
-    geom_tile(aes(fill = no3_b),) +
-    scale_fill_viridis_d() +
-    coord_fixed() +
-    facet_grid(vars(year), vars(modelrun)) +
-    labs(title = "Predicted NO3 concentrations, log10 scale") +
-  easy_remove_axes(what = "title")
-
-gg
-
-  
-```
-
-
-
-
-### Average temporal change for all grid cells     
-
-```{r}
-
-log_no3_overallmean <- purrr::map(
-  pdata,
-  ~summarize(., log_no3_mean = mean(log_no3),
-              log_no3_sd = sd(log_no3),
-              .groups = "drop") 
-)
-bind_rows(log_no3_overallmean)
-
-log_no3_gridmeans <- purrr::map(
-  pdata,
-  ~group_by(.,x, y) %>%
-    summarize(log_no3_mean = mean(log_no3),
-              log_no3_sd = sd(log_no3),
-              .groups = "drop") 
-)
-
-pdata_dev_cell <- map2(
-  pdata, log_no3_gridmeans,
-  ~left_join(.x, .y, by = c("x", "y")) %>%
-  mutate(
-    xy = paste0(x, "_", y),
-    log_no3_dev = log_no3 - log_no3_mean)
-)
-# head(pdata_dev[[1]])
-# View(pdata_dev[[1]])
-
-pdata_yreffect_list <- purrr::map(
-  pdata_dev, 
-  ~group_by(., year) %>%
-  summarize(log_no3_dev = mean(log_no3_dev))
-)
-
-pdata_yreffect_list <- purrr::map(
-  pdata_dev, 
-  ~group_by(., x, y, year) %>%
-  summarize(log_no3_dev = mean(log_no3_dev))
-)
-# str(pdata_yreffect_list[[1]])
-
-pdata_yreffect_list <- purrr::map2(
-  pdata_yreffect_list, log_no3_overallmean,
-  ~ mutate(.x, log_no3_est = log_no3_dev + .y$log_no3_mean[1])
-)
-
-pdata_yreffect <- bind_rows(
-  pdata_yreffect_list, .id = "modelrun") %>%
-  mutate(
-    log_no3_rel = 100*(10^log_no3_dev),
-    no3_est = 10^log_no3_est
-  )
-str(pdata_yreffect, 1)
-
-```
-
-
-### Average temporal change for all grid cells     
-
-```{r}
-
-log_no3_overallmean <- purrr::map(
-  pdata,
-  ~summarize(., log_no3_mean = mean(log_no3),
-              log_no3_sd = sd(log_no3),
-              .groups = "drop")  %>%
-    as.data.frame()
-)
-bind_rows(log_no3_overallmean)
-
-log_no3_gridmeans <- purrr::map(
-  pdata,
-  ~group_by(.,x, y) %>%
-    summarize(log_no3_mean = mean(log_no3),
-              log_no3_sd = sd(log_no3),
-              .groups = "drop") 
-)
-
-pdata_dev_all <- list()
-for (i in 1:length(pdata)){
-  # i <- 1
-  pdata_dev_all[[i]] <- left_join(
-    pdata[[i]],
-    log_no3_gridmeans[[i]],
-    by = c("x", "y")
-  ) %>%
-    mutate(
-      xy = paste0(x, "_", y),
-      log_no3_dev = log_no3 - log_no3_mean,
-      log_no3_est = log_no3_dev + log_no3_overallmean[[i]]$log_no3_mean)
-}
-
-pdata_yreffect_list <- purrr::map(
-  pdata_dev_all, 
-  ~group_by(., year) %>%
-  summarize(
-    log_no3_dev = mean(log_no3_dev),
-    log_no3_est = mean(log_no3_dev))
-)
-
-pdata_yreffect <- bind_rows(
-  pdata_yreffect_list, .id = "modelrun") %>%
-  mutate(
-    log_no3_rel = 100*(10^log_no3_dev),
-    no3_est = 10^log_no3_est
-  )
-str(pdata_yreffect, 1)
-
-```
-
-
-#### Plots  
-```{r}
-
-ggplot(pdata_yreffect, 
-       aes(year, log_no3_dev, color = modelrun)) +
-  geom_line() +
-  labs(title = "Year effect, log deviance from cell mean")
-
-ggplot(pdata_yreffect, 
-       aes(year, log_no3_rel, color = modelrun)) +
-  geom_line() +
-  labs(title = "Year effect, relative percent")
-
-ggplot(pdata_yreffect, 
-       aes(year, log_no3_est, color = modelrun)) +
-  geom_line() +
-  labs(title = "Year effect, estimated log means")
-
-ggplot(pdata_yreffect, 
-       aes(year, no3_est, color = modelrun)) +
-  geom_line() +
-  labs(title = "Year effect, estimated mean")
-
-```
-
-```{r}
-
-test <- pdata_dev[[1]] %>% filter(x==2500, y==2550)
-ggplot(test, aes(year, log_no3)) +
-  geom_point()
-ggplot(test, aes(year, log_no3_dev)) +
-  geom_point()
-
-test <- pdata_yreffect_list[[1]]
-ggplot(test, aes(year, log_no3_dev)) +
-  geom_point()
-ggplot(test, aes(year, log_no3_est)) +
-  geom_point()
-
-```
-
-```{r}
-
-
-
-
-ggplot(pdata[[1]], 
-       aes(year, log_no3, color = paste0(x, "_", y))) +
-  geom_line() +
-  ggeasy::easy_remove_legend()
-
-
-ggplot(pdata_dev[[1]], 
-       aes(year, log_no3_dev, color = paste0(x, "_", y))) +
-  geom_line() +
-  ggeasy::easy_remove_legend()
-
-ggplot(pdata_dev[[2]], 
-       aes(year, log_no3_dev, color = paste0(x, "_", y))) +
-  geom_line() +
-  ggeasy::easy_remove_legend()
-
-ggplot(pdata_yeareffect, aes(year, log_no3_yeareffect)) +
-  # geom_ribbon(aes(
-  #   ymin = log_no3_yeareffect - log_no3_yeareffect_sd,
-  #   ymax = log_no3_yeareffect + log_no3_yeareffect_sd, group = model), fill = "grey70", alpha = 0.3) +
-  geom_line(aes(color = model)) +
-  coord_cartesian(ylim = c(-0.06, 0.06))
-
-```
-
-
-
-
-## 9. Prediction on data  
-
-
-
-
-### Calculate predicted values
 
 ```{r}
 
 #
-# Note: reusing almost the same object names as in 8, 
-#   but pdata renamed to 'pdatad' and the variable name 
-#   'log_no3_pred' instead of 'log_no3'
+# Test area  
 #
 
 if (FALSE){
-# if (TRUE){
   
-  
-  tic()
-  pred1 <- predict(mod1, newdata = dat %>% filter(sitegroup %in% 1), 
-                   se.fit = TRUE)
-  pred2 <- predict(mod2, newdata = dat %>% filter(year >= 2000), 
-                   se.fit = TRUE)
-  pred2b <- predict(mod2b, newdata = dat %>% filter(sitegroup %in% 1 & year >= 2000), 
-                   se.fit = TRUE)
-  # 94 sec 
-  toc()
-  
-  # Only difference from 8: using 'log_no3_pred' instead of 'log_no3'  
-  pdata1 <- dat %>% 
-    filter(sitegroup %in% 1) %>%
-    mutate(
-      log_no3_pred = as.numeric(pred1$fit),
-      log_no3_se = as.numeric(pred1$se.fit)
-    ) %>%
-    rename(
-      log_no3_obs = log_no3,                   # observed data kept 
-    )
-  pdata2 <- dat %>% 
-    filter(year >= 2000) %>%
-    mutate(
-      log_no3_pred = as.numeric(pred2$fit),
-      log_no3_se = as.numeric(pred2$se.fit)
-    ) %>%
-    rename(
-      log_no3_obs = log_no3,
-    )
-  pdata2b <- dat %>% 
-    filter(sitegroup %in% 1 & year >= 2000) %>%
-    mutate(
-      log_no3_pred = as.numeric(pred2b$fit),
-      log_no3_se = as.numeric(pred2b$se.fit)
-    ) %>%
-    rename(
-      log_no3_obs = log_no3,
-    )
-  
-  saveRDS(pdata1, "Data/108_mod1_pred_data.rds")
-  saveRDS(pdata2, "Data/108_mod2_pred_data.rds")
-  saveRDS(pdata2b, "Data/108_mod2b_pred_data.rds")
+m1 <- gam(modelfit ~ s(year, k = 8), data = dat_wb_means[[1]])  
+plot(m1)  
+
+ggplot(get_modelfit_byyear(dat_wb_means[[1]]), aes(year, fit)) +
+  geom_ribbon(aes(ymin = fit - 2*se.fit, ymax = fit + 2*se.fit), fill = "lightblue") +
+  geom_line()
 
 }
 
-pdata1 <- readRDS("Data/108_mod1_pred_data.rds")
-pdata2 <- readRDS("Data/108_mod2_pred_data.rds")
-pdata2b <- readRDS("Data/108_mod2b_pred_data.rds")
+```
 
-pdatad <- list(pdata1, pdata2, pdata2b)
+### Predicted values for all years  
+
+* For all water bodies and all years (for the given run)       
+* Should be little affected by WBs coming in later in the process  
+
+```{r}
+#| cache: true
+
+get_fit_allyears <- function(data, model){
+  wbs <- unique(data$waterbody)  
+  n_wbs <- length(wbs)
+  years <- seq(min(data$year), max(data$year))  
+  n_years <- length(years)
+  newdata = data.frame(
+    waterbody = rep(wbs, each = n_years),
+    year = rep(years, length = n_wbs)
+  ) %>%
+    left_join(df_wb %>% select(waterbody, x, y)) 
+  fit_object <- predict(model, newdata=newdata, se.fit = TRUE)
+  newdata %>%
+    mutate(spatialfit = fit_object$fit,
+           se.spatialfit = fit_object$se.fit)
+}
+
+# tic()
+# test <- get_fit_allyears(dat_wb_means[[1]], mod[[1]])
+# toc()
+
+tic()
+dat_wb_fit_allyrs <- purrr::map2(dat_wb_means, mod, get_fit_allyears)
+toc()  # 53 sec  
+# names(dat_wb_fit_allyrs_list)   
+
+# dat_wb_fit_allyrs <- bind_rows(dat_wb_fit_allyrs_list, .id = "modelrun")
 
 ```
 
-
-### Example: all sites within a grid cell 
+#### Plot year effect   
 
 ```{r}
 
-xval <- 2000
-yval <- 2000
-i <- 2
+get_modelfit_byyear <- function(data_with_fit){
+  yearmod <- gam(spatialfit ~ s(year, k = 8), data = data_with_fit)  
+  # yearmod <- gam(no3_fit ~ s(year, k = 8), data = data_with_fit %>% mutate(no3_fit = 10^spatialfit))  
+  yearmod_pred = data.frame(year = seq(min(data_with_fit$year), 2020))
+  fit_object <- predict(yearmod, newdata = yearmod_pred, se.fit = TRUE)
+  yearmod_pred %>%
+    mutate(yearfit = fit_object$fit,
+           se.yearfit = fit_object$se.fit)
+}
 
-gg <- pdatad[[i]] %>%
-  filter(grid_x == xval & grid_y == yval) %>%
-  ggplot(aes(year, log_no3_pred, color = site)) +
-  geom_path() +
-  geom_point(aes(y = log_no3_obs))
+dat_year_fit <- map_dfr(dat_wb_fit_allyrs, get_modelfit_byyear, .id = "modelrun") %>%
+  mutate(
+    yearfit_lo = yearfit - 2*se.yearfit,
+    yearfit_up = yearfit + 2*se.yearfit,
+    yearfit_back = 10^yearfit,
+    yearfit_back_lo = 10^yearfit_lo,
+    yearfit_back_up = 10^yearfit_up
+  )
 
-gg
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  labs(y = "log10(NO3 conc.)") +
+  theme_bw()
 
-gg + facet_wrap(vars(site))
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  labs(y = "log10(NO3 conc.)") +
+  facet_wrap(vars(modelrun))
+
+```
+
+#### Plot year effect, back-transformed to ordinary scale   
+
+```{r}
+
+ggplot(dat_year_fit, aes(year, yearfit_back, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_back_lo, ymax = yearfit_back_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  labs(y = "NO3 conc.") +
+  theme_bw()
+
+ggplot(dat_year_fit, aes(year, yearfit_back, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_back_lo, ymax = yearfit_back_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  labs(y = "NO3 conc.") +
+  facet_wrap(vars(modelrun))
 
 ```
 
 
+#### Plot year effect, back-transformed before gam     
 
+```{r}
+
+get_modelfit_byyear <- function(data_with_fit){
+  # yearmod <- gam(spatialfit ~ s(year, k = 8), data = data_with_fit)  
+  yearmod <- gam(no3_fit ~ s(year, k = 8), data = data_with_fit %>% mutate(no3_fit = 10^spatialfit))  
+  yearmod_pred = data.frame(year = seq(min(data_with_fit$year), 2020))
+  fit_object <- predict(yearmod, newdata = yearmod_pred, se.fit = TRUE)
+  yearmod_pred %>%
+    mutate(yearfit = fit_object$fit,
+           se.yearfit = fit_object$se.fit)
+}
+
+dat_year_fit <- map_dfr(dat_wb_fit_allyrs, get_modelfit_byyear, .id = "modelrun") %>%
+  mutate(
+    yearfit_lo = yearfit - 2*se.yearfit,
+    yearfit_up = yearfit + 2*se.yearfit,
+    yearfit_back = 10^yearfit,
+    yearfit_back_lo = 10^yearfit_lo,
+    yearfit_back_up = 10^yearfit_up
+  )
+
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  labs(y = "log10(NO3 conc.)") +
+  theme_bw()
+
+ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
+  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
+              fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  labs(y = "log10(NO3 conc.)") +
+  facet_wrap(vars(modelrun))
+
+```
+
+
+## 9. GAM, time + random effect for waterbody  
+
+* 4 runs (model fits/predictions) for different datasets/time ranges    
+* 1992 onwards (run 1) or 2000 onwards (run 2-4)    
+
+### Fit model  
+```{r}
+
+if (rerun_gam_fitting3){
+# if(TRUE) {
+  
+  # For some reason, this doesn't seem to work:
+  # mod <- purrr::map(
+  #   run_datasel, ~gam(log_no3 ~ s(x, y, year, k=600), data = dat[.,]))
+  # (neither does a for-next loop)
+  
+  tic()
+  df <- dat_wb_means[[1]] %>% mutate(waterbody_f = factor(waterbody))
+  modr1 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  df <- dat_wb_means[[2]] %>% mutate(waterbody_f = factor(waterbody))
+  modr2 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  df <- dat_wb_means[[3]] %>% mutate(waterbody_f = factor(waterbody))
+  modr3 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  df <- dat_wb_means[[4]] %>% mutate(waterbody_f = factor(waterbody))
+  modr4 <- gam(log_no3 ~ s(year, k = 8) + s(waterbody_f, bs = "re"), data = df)
+  toc() # 370 sec  
+
+  modr <- list(modr1,modr2,modr3,modr4)
+  names(modr) <- names(dat_wb_means)
+  
+  saveRDS(modr, "Data/120_modr_list.rds")
+
+}
+
+# Put in list and remove the single models
+tic()
+modr <- readRDS("Data/120_modr_list.rds")
+toc()  
+
+```
+
+
+#### Get year effect data  
+
+* Using 'plot_smooth' in R package 'itsadug'  
+
+```{r}
+#| results: hide  
+
+if (!"itsadug" %in% installed.packages())
+  install.packages("itsadug")
+
+library(itsadug)
+plotdata_time_effect_list <- purrr::map(modr, plot_smooth, view = "year", 
+                                        rug = F, 
+                                        main = "GAM for time (random effect for waterbody removed)", 
+                                        rm.ranef = TRUE)
+
+```
+
+#### Plot year effect  
+
+```{r}
+
+plotdata_time_effect <- map_dfr(plotdata_time_effect_list, "fv",  .id = "modelrun")
+
+ggplot(plotdata_time_effect, aes(year, fit, group = modelrun)) +
+  geom_line(aes(color = modelrun)) +
+  theme_bw()
+
+ggplot(plotdata_time_effect, aes(year, fit, group = modelrun)) +
+  geom_ribbon(aes(ymin = ll, ymax = ul), fill = "grey50", alpha = 0.3) +
+  geom_line(aes(color = modelrun)) +
+  theme_bw()
+
+ggplot(plotdata_time_effect, aes(year, fit)) +
+  geom_ribbon(aes(ymin = ll, ymax = ul), fill = "grey50", alpha = 0.3) +
+  geom_line() +
+  theme_bw() +
+  facet_wrap(vars(modelrun))
+
+
+```
 
