@@ -17,6 +17,7 @@ editor: source
 -   Use ordinary spatial thin-plate smooth, i.e. default version of s(x,y) instead of soap-film smoother
 -   Using data for all Europe  
 -   130 vs 120: this script does not use log_no3 but rather no3, from the start  
+-   135 vs 130: this script does tries to use proper error propagation    
 
 ## 0. Settings  
 ```{r}
@@ -376,10 +377,10 @@ for (yr in 1992:2020){
 
 nrow(pdata_for_gam_allyrs)
 
-saveRDS(pdata_for_gam_allyrs, "Data/130_pdata_for_gam_allyrs.rds")
+saveRDS(pdata_for_gam_allyrs, "Data/135_pdata_for_gam_allyrs.rds")
 
 # if you want to read this directly:
-# pdata_for_gam_allyrs <- readRDS("Data/130_pdata_for_gam_allyrs.rds")
+# pdata_for_gam_allyrs <- readRDS("Data/135_pdata_for_gam_allyrs.rds")
 
 ```
 
@@ -745,7 +746,9 @@ get_predictions <- function(model, data){
     mutate(
       site_f = factor(site)
     )
-  data_pred$fit <- predict(model, newdata = data_pred)
+  pred_object <- predict(model, newdata = data_pred, se.fit = TRUE)
+  data_pred$fit <- pred_object$fit
+  data_pred$se.fit <- pred_object$se.fit
   data_pred
   
 }
@@ -793,8 +796,9 @@ if (FALSE){
   nrow(df_pred)
   df_pred <- run_gam_2("DEGB_DEST_SAL-GW-042", 1:3, years = 2000:2020)
   nrow(df_pred)
+  # debugonce(run_gam_2)
   # debugonce(get_predictions)
-  df_pred <- run_gam_2("DEGB_DEMV_WP_WA_3")
+  df_pred <- run_gam_2("DEGB_DEMV_WP_WA_3", 1:3, years = 1992:2020)
   # yrs <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042") %>% pull(year)
   # predict(m1, data.frame(year = yrs))
   
@@ -866,6 +870,7 @@ if (TRUE){
 
 
 ```
+
 ### Check of means  
 
 ```{r}
@@ -878,7 +883,6 @@ dat %>%
   summarize(no3 = mean(no3))
 
 ```
-
 
 ### Run all WBs    
 
@@ -905,7 +909,9 @@ if (rerun_gam_fitting1){
     ok <- map_lgl(result$error, is.null)  
     bind_rows(result$result[ok]) %>%
       group_by(waterbody, year) %>%
-      summarize(no3 = mean(fit), .groups = "drop") %>%
+      summarize(
+        no3 = mean(fit), 
+        no3_se = sqrt(mean(se.fit^2)), .groups = "drop") %>%
       left_join(metadata_waterbody %>% select(waterbody, x, y),
                 by = "waterbody")
   }
@@ -920,13 +926,13 @@ if (rerun_gam_fitting1){
                            "Since 2000, site group 1-2",
                            "Since 2000, site group 1")
   
-  saveRDS(dat_wb_bysite, "Data/130_dat_wb_bysite.rds")
-  saveRDS(dat_wb_means, "Data/130_dat_wb_means.rds")
-  # saveRDS(res_orig, "Data/130_res_orig.rds")
+  saveRDS(dat_wb_bysite, "Data/135_dat_wb_bysite.rds")
+  saveRDS(dat_wb_means, "Data/135_dat_wb_means.rds")
+  # saveRDS(res_orig, "Data/135_res_orig.rds")
   
 }
 
-dat_wb_means <- readRDS("Data/130_dat_wb_means.rds")  
+dat_wb_means <- readRDS("Data/135_dat_wb_means.rds")  
 
 
 ```
@@ -963,7 +969,49 @@ if (FALSE){
 * Interactive effects of space and time  
 * Based on the independently modelled data  
 
-### Running GAMs
+### Gam with random variation added to 'data'   
+
+* Makes stochastic data based on the SE derived from each water body's model  
+* Runs GAM  
+* Makes data set with all water bodies and all years, including year x WB combinations that's not in the data    
+* Predict results (NO3) for the data set using the given GAM  
+
+```{r}
+
+get_fit_allyears_stoch <- function(i, data){
+  # Make stochastic data  
+  dat_stoch <- dat_wb_means[[1]] %>%
+    mutate(no3_stoch = rnorm(n=length(no3), mean = no3, sd = no3_se))
+  # GAM model
+  model <- gam(no3_stoch ~ s(x, y, year, k=600), data = dat_stoch)
+  # Data for prediction
+  wbs <- unique(data$waterbody)  
+  n_wbs <- length(wbs)
+  years <- seq(min(data$year), max(data$year))  
+  n_years <- length(years)
+  newdata = data.frame(
+    waterbody = rep(wbs, each = n_years),
+    year = rep(years, length = n_wbs)
+  ) %>%
+    left_join(df_wb %>% select(waterbody, x, y), by = "waterbody") 
+  # Predictiopn
+  fit_object <- predict(model, newdata=newdata, se.fit = TRUE)
+  newdata %>%
+    mutate(spatialfit = fit_object$fit,
+           se.spatialfit = fit_object$se.fit,
+           repl = i)
+}
+
+# test <- get_fit_allyears_stoch(dat_wb_means[[1]])  
+
+# tic()
+# test2 <- map_dfr(1:2, get_fit_allyears_stoch, data = dat_wb_means[[1]])
+# toc()  # 67 sec
+
+```
+
+
+### Run GAMs and retrieve 
 
 * 4 runs (model fits/predictions) for different datasets/time ranges    
 * 1992 onwards (run 1) or 2000 onwards (run 2-4)    
@@ -979,28 +1027,30 @@ if (rerun_gam_fitting2){
   #   run_datasel, ~gam(no3 ~ s(x, y, year, k=600), data = dat[.,]))
   # (neither does a for-next loop)
   
+  set.seed(20)
+  
   tic()
-  mod1 <- gam(no3 ~ s(x, y, year, k=600), data = dat_wb_means[[1]])
-  saveRDS(mod1, "Data/130_mod1.rds")
-  mod2 <- gam(no3 ~ s(x, y, year, k=600), data = dat_wb_means[[2]])
-  saveRDS(mod2, "Data/130_mod2.rds")
-  mod3 <- gam(no3 ~ s(x, y, year, k=600), data = dat_wb_means[[3]])
-  saveRDS(mod3, "Data/130_mod3.rds")
-  mod4 <- gam(no3 ~ s(x, y, year, k=600), data = dat_wb_means[[4]])
-  saveRDS(mod4, "Data/130_mod4.rds")
-  toc() # 122 sec  
+  mod1 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[1]])
+  saveRDS(mod1, "Data/135_mod1.rds")
+  mod2 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[2]])
+  saveRDS(mod2, "Data/135_mod2.rds")
+  mod3 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[3]])
+  saveRDS(mod3, "Data/135_mod3.rds")
+  mod4 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[4]])
+  saveRDS(mod4, "Data/135_mod4.rds")
+  toc() # 1551 sec (25 min)
 
 }
 
 # Read saved data  
-mod1 <- readRDS("Data/130_mod1.rds")
-mod2 <- readRDS("Data/130_mod2.rds")
-mod3 <- readRDS("Data/130_mod3.rds")
-mod4 <- readRDS("Data/130_mod4.rds")
+mod1 <- readRDS("Data/135_mod1.rds")
+mod2 <- readRDS("Data/135_mod2.rds")
+mod3 <- readRDS("Data/135_mod3.rds")
+mod4 <- readRDS("Data/135_mod4.rds")
 
 # Put in list and remove the single models
-mod <- list(mod1, mod2, mod3, mod4)
-names(mod) <- names(dat_wb_means)
+mod_raw <- list(mod1, mod2, mod3, mod4)
+names(mod_raw) <- names(dat_wb_means)
 
 rm(mod1, mod2, mod3, mod4)
 
@@ -1009,64 +1059,108 @@ rm(mod1, mod2, mod3, mod4)
 
 ```
 
-### Summary of model
+#### Check models  
+```{r}
+
+# Some random water bodies
+
+set.seed(25)
+wb_test <- mod_raw[[1]] %>% pull(waterbody) %>% unique() %>% sample(size = 12)
+
+
+ggplot(mod_raw[[1]] %>% filter(waterbody %in% wb_test), aes(year, spatialfit)) +
+  geom_point(shape = "-") +
+  facet_wrap(vars(waterbody))
+
+ggplot(mod_raw[[1]] %>% filter(waterbody %in% wb_test), aes(year, se.spatialfit)) +
+  geom_point(shape = "-") +
+  facet_wrap(vars(waterbody))
+
+ggplot(mod_raw[[1]] %>% filter(waterbody %in% "FRDG330"), aes(year, spatialfit)) +
+  geom_point(size = rel(0.5))
+
+ggplot(mod_raw[[1]] %>% filter(waterbody %in% "FRDG330"), aes(year, se.spatialfit)) +
+  geom_point(size = rel(0.5))
+
+ 
+```
+
+### Summarize per water body  
 
 ```{r}
 
-summary.mini <- function(modelnumber, model_list){
-  model <- model_list[[modelnumber]]
-  cat(names(model_list)[modelnumber], "\n")
-  summ <- summary(model)
-  cat("Sample size:", summ$n, "\n")
-  print(summ$s.table)
-  cat("Deviance explained:", summ$dev.expl, "\n\n")
+get_summaryfit_allyears <- function(dat_fitted_values){
+  dat_fitted_values %>%
+    group_by(waterbody, year) %>%
+    summarize(
+      spatialfit_mean = mean(spatialfit),
+      spatialfit_mean_sd = sd(spatialfit),
+      spatialfit_se_mean = sqrt(mean(se.spatialfit^2)), .groups = "drop"
+    ) %>% 
+    as.data.frame()
 }
 
-walk(1:length(mod), summary.mini, model_list = mod)
 
 ```
-
-### Predicted values for input data     
-
-* deleted this part (results can be seen in script 120)
-
-
-### Predicted values for all years  
-
-* For all water bodies and all years (for the given run)       
-* Should be little affected by WBs coming in later in the process  
 
 ```{r}
-#| cache: true
 
-get_fit_allyears <- function(data, model){
-  wbs <- unique(data$waterbody)  
-  n_wbs <- length(wbs)
-  years <- seq(min(data$year), max(data$year))  
-  n_years <- length(years)
-  newdata = data.frame(
-    waterbody = rep(wbs, each = n_years),
-    year = rep(years, length = n_wbs)
-  ) %>%
-    left_join(df_wb %>% select(waterbody, x, y), by = "waterbody") 
-  fit_object <- predict(model, newdata=newdata, se.fit = TRUE)
-  newdata %>%
-    mutate(spatialfit = fit_object$fit,
-           se.spatialfit = fit_object$se.fit)
+get_summaryfit_allyears <- function(dat_fitted_values){
+  dat_fitted_values %>%
+    group_by(waterbody, year) %>%
+    summarize(
+      spatialfit_mean = mean(spatialfit),
+      spatialfit_mean_sd = sd(spatialfit),
+      spatialfit_se_mean = sqrt(mean(se.spatialfit^2)), .groups = "drop"
+    ) %>% 
+    as.data.frame()
 }
+  
+# test <- get_summaryfit_allyears(mod_raw[[1]])  
 
-# tic()
-# test <- get_fit_allyears(dat_wb_means[[1]], mod[[1]])
-# toc()
+mod <- purrr::map_dfr(mod_raw, get_summaryfit_allyears, .id = "modelrun")  
 
-tic()
-dat_wb_fit_allyrs <- purrr::map2(dat_wb_means, mod, get_fit_allyears)
-toc()  # 53 sec  
-# names(dat_wb_fit_allyrs_list)   
-
-# dat_wb_fit_allyrs <- bind_rows(dat_wb_fit_allyrs_list, .id = "modelrun")
+ggplot(mod_raw[[1]] %>% filter(waterbody %in% wb_test), aes(year, se.spatialfit)) +
+  geom_point(shape = "-") +
+  facet_wrap(vars(waterbody))  
 
 ```
+
+```{r}
+
+mod_raw[[1]] %>%
+  group_by(repl, year) %>%
+  summarize(
+    yearfit_byrep_mean = mean(spatialfit_mean),
+    yearfit_byrep_sd = sd(spatialfit_mean),
+    yearfit_byrep_sd_mean = mean(spatialfit_se_mean), .groups = "drop"
+  )
+
+```
+
+### Get annual means  
+
+```{r}
+
+dat_means <- mod %>%
+  group_by(modelrun,year) %>%
+  summarize(
+    yearfit_mean = mean(spatialfit_mean),
+    yearfit_sd = sd(spatialfit_mean),
+    yearfit_sd_mean = mean(spatialfit_se_mean), .groups = "drop"
+  )
+  
+
+dat_means <- mod_raw[[1]] %>%
+  group_by(modelrun, year, repl) %>%
+  summarize()
+
+  
+
+
+```
+
+
 
 #### Plot year effect   
 
