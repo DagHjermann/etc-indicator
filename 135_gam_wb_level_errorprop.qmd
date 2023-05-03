@@ -247,7 +247,7 @@ full_raster <- rast(
 # Set values of the SpatRaster
 values(full_raster) <- full_grid$i
 
-plot(full_raster)
+# plot(full_raster)
 
 ```
 
@@ -756,13 +756,11 @@ dat <- dat  %>%
 
 dat_test <- dat %>% filter(waterbody %in% "DEGB_DEST_SAL-GW-042")
 
-cat("Number of years, site by sitegroup: \n")
-table(dat_test$site, dat_test$sitegroup)
-cat("Number of years, site by year: \n")
+cat("Site by year table: \n")
 table(dat_test$site, dat_test$year)
 
-m1 <- gam(no3 ~ s(year, k = 2), data = dat_test)
-m2 <- gam(no3 ~ s(year, k = 2) + s(site_f, bs = "re"), data = dat_test)
+m1 <- gam(no3 ~ s(year, k = 3), data = dat_test)
+m2 <- gam(no3 ~ s(year, k = 3) + s(site_f, bs = "re"), data = dat_test)
 
 cat("**********************************\nGAM model ignoring sites: \n")
 summary(m1)
@@ -823,20 +821,54 @@ dat_test4$se.fit <- pred_object$se.fit
 dat_test4_mean <- dat_test4 %>%
   group_by(year) %>% summarize(fit = mean(fit))
 
-ggplot(dat_test, aes(x = year, y = no3)) +
-  geom_point(aes(color = site_f)) +
-  labs(title = "Data")
-
-ggplot(dat_test4, aes(x = year, y = fit)) +
-  geom_pointrange(aes(ymin = fit-2*se.fit, ymax = fit+2*se.fit, color = site_f)) +
-  geom_point(data = dat_test4 %>% group_by(year) %>% summarize(fit = mean(fit))) +
-  geom_line(data = dat_test4_mean) +
-  labs(title = "Predictions (black dots are used for later spatial gam)", 
-       subtitle = "Including year x site combinations with no data. ") 
-
 
 ```
 
+#### Plots 
+ 
+```{r}
+#| fig-width: 9
+#| fig-height: 4
+
+
+dat_test_means <- dat_test %>%
+  group_by(year) %>%
+  summarize(no3 = mean(no3))
+
+gg1 <- ggplot(dat_test, aes(x = year, y = no3)) +
+  geom_point(data = dat_test_means, color = "black", shape = 1, size = rel(3)) +
+  geom_point(aes(color = site_f)) +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  # geom_point(data = dat_test_pred, color = "black") +
+  scale_color_brewer("Site", palette = "Dark2") +
+  coord_cartesian(ylim = c(0,100)) +
+  labs(title = "Using means", y = "Observed NO3 conc.", x = "Year") + 
+  theme_bw() +
+  easy_remove_legend()
+# gg1
+
+gg2_with_legend <- ggplot(dat_test4, aes(x = year, y = fit)) +
+  # geom_pointrange(aes(ymin = fit-2*se.fit, ymax = fit+2*se.fit, color = site_f), size = rel(1)) +
+  geom_linerange(aes(ymin = fit-2*se.fit, ymax = fit+2*se.fit, color = site_f), size = rel(1)) +
+  geom_point(aes(color = site_f)) +
+  geom_point(data = dat_test4 %>% group_by(year) %>% summarize(fit = mean(fit)), 
+             color = "black", shape = 1, size = rel(3)) +
+  geom_line(data = dat_test4_mean, size = rel(1)) +
+  scale_color_brewer("Site", palette = "Dark2") +
+  coord_cartesian(ylim = c(0,100)) +
+  labs(title = "Using a random site factor", y = "Expected NO3 conc.", x = "Year") + 
+  theme_bw()
+gg2 <- gg2_with_legend + easy_remove_legend()
+legend <- cowplot::get_legend(gg2_with_legend)
+# gg2 
+
+gg <- cowplot::plot_grid(gg1, gg2, legend, nrow = 1, rel_widths = c(2,2,1))
+
+ggsave("Figures/135_random_sie_example.png", gg, width = 9, height = 4, dpi = 200)
+
+gg
+
+```
 
 
 ### Function: run GAM
@@ -1283,7 +1315,10 @@ df_by_year_repl <- map_dfr(
     summarize(no3_repl = mean(spatialfit), .groups = "drop"),
   .id = "modelrun")
 
-df_by_year <- df_by_year_repl %>% 
+modelrun_order <- c("Since 1992, site group 1", "Since 2000, site group 1-3", "Since 2000, site group 1-2", "Since 2000, site group 1")
+
+df_by_year <- df_by_year_repl %>%
+  mutate(modelrun = factor(modelrun, levels = modelrun_order)) %>%
   group_by(modelrun, year) %>%
   summarize(no3_mean = mean(no3_repl),
             no3_sd = sd(no3_repl), .groups = "drop")
@@ -1297,7 +1332,7 @@ ggplot(df_by_year_repl, aes(year, no3_repl)) +
   theme_bw() +
   labs(x = "Year", y = "NO3 concentration")
 
-ggplot(df_by_year, aes(year, no3_repl, color = modelrun)) +
+gg <- ggplot(df_by_year, aes(year, no3_repl, color = modelrun)) +
   geom_line(aes(y = no3_mean)) +
   geom_line(aes(y = no3_mean - 2*no3_sd), linetype = "dashed") +
   geom_line(aes(y = no3_mean + 2*no3_sd), linetype = "dashed") +
@@ -1305,6 +1340,9 @@ ggplot(df_by_year, aes(year, no3_repl, color = modelrun)) +
   theme_bw() +
   labs(x = "Year", y = "NO3 concentration")
 
+ggsave("Figures/135_overall_temporal_change.png", gg, width = 8, height = 3.5, dpi = 200)
+
+gg
 
 ```
 
@@ -1354,8 +1392,9 @@ get_change <- function(predictions_with_repl){
 
 ```{r}
 
-df_change <- map_dfr(mod_raw, get_change, .id = "modelrun")
-
+df_change <- map_dfr(mod_raw, get_change, .id = "modelrun") %>%
+  mutate(modelrun = factor(modelrun, levels = modelrun_order))
+  
 ```
 
 
@@ -1366,16 +1405,36 @@ df_change <- map_dfr(mod_raw, get_change, .id = "modelrun")
 
 gg <- ggplot(df_change, aes(x,y)) +
   geom_path(data = country_borders, aes(x,y,group = group)) +
-  geom_point(aes(color = change_text)) +
+  geom_point(aes(color = change_text), size = rel(1)) +
   facet_grid(vars(modelrun), vars(change_text)) +
   coord_fixed() +
   theme_bw() +
   easy_remove_legend() +
   easy_remove_axes(what = c("text", "title", "ticks"))  
 
-ggsave("Figures/Change_by_waterbody.png", gg, width = 7, height = 9, dpi = 200)
+ggsave("Figures/135_change_by_waterbody.png", gg, width = 7, height = 9, dpi = 200)
 
 gg
+
+```
+### Table
+```{r}
+
+tab <- df_change %>%
+  count(modelrun, change_text) %>%
+  group_by(modelrun)%>%
+  mutate(tot = sum(n)) %>%
+  ungroup() %>%
+  mutate(percent = round(100*n/tot, 1))
+
+tab
+
+tab %>% 
+  select(-n,-tot) %>% 
+  tidyr::pivot_wider(names_from = change_text, values_from = percent) %>%
+  knitr::kable()
+  
+
 
 ```
 
