@@ -566,9 +566,13 @@ df_wb <- dat %>%
     n_rows = length(site),
     n_sites = length(unique(site)),
     n_years = length(unique(year)),
+    before_2000 = min(year) < 2000,
     group_1 = length(unique(site[sitegroup %in% 1])),
     group_2 = length(unique(site[sitegroup %in% 2])),
     group_3 = length(unique(site[sitegroup %in% 3])),
+    group_1_rows = length(site[sitegroup %in% 1]),
+    group_2_rows = length(site[sitegroup %in% 2]),
+    group_3_rows = length(site[sitegroup %in% 3]),
     x = mean(x),
     y = mean(y),
     .groups = "drop"
@@ -580,6 +584,157 @@ cat("nrow(df_wb):", nrow(df_wb), "\n")
 
 
 ```
+### Plot water bodies  
+```{r}
+
+data_for_plot <- df_wb %>%
+  mutate(
+    Waterbody_group = case_when(
+      group_1 > 0 ~ "Includes group 1 sites",
+      group_2 > 0 ~ "No group 1, but some group 2",
+      group_3 > 0 ~ "No group 1 or 2, but group 3"),
+    Waterbody_group = factor(Waterbody_group, 
+                   levels = c("Includes group 1 sites",
+                              "No group 1, but some group 2", 
+                              "No group 1 or 2, but group 3")),
+    Included_in_analysis = case_when(
+      group_1 == 0 & group_2 == 0 ~ "Excluded",
+      TRUE ~ "Included")
+  ) %>%
+  arrange(desc(Waterbody_group))
+
+gg <- ggplot(data_for_plot, aes(x, y)) +
+  geom_point(aes(fill = Waterbody_group), pch = 21) +
+  geom_path(data = country_borders, aes(x,y,group = group)) +
+  scale_fill_brewer("Waterbody group", palette = "RdYlBu", direction = -1) +
+  coord_fixed() +
+  theme_bw()
+
+gg + facet_wrap(vars())
+
+```
+### Statistics  
+```{r}
+
+cat("--------------------------------\nNumber of water bodies\n--------------------------------\n")
+xtabs(~Waterbody_group, data_for_plot)
+
+cat("\n--------------------------------\nNumber of sites (by water body group)\n--------------------------------\n")
+xtabs(n_sites ~ Waterbody_group, data_for_plot)
+cat("\n---------------\n- Number of rows (years * sites)\n---------------\n")
+xtabs(n_rows ~ Waterbody_group, data_for_plot)
+
+cat("\n--------------------------------\nNumber of group 1 sites (by water body group)\n--------------------------------\n")
+xtabs(group_1 ~ Waterbody_group, data_for_plot)
+cat("\n")
+xtabs(group_1 ~ Included_in_analysis, data_for_plot)
+cat("\n---------------\n- Number of rows (years * sites)\n---------------\n")
+xtabs(group_1_rows ~ Waterbody_group, data_for_plot)
+xtabs(group_1_rows ~ Included_in_analysis, data_for_plot)
+
+cat("\n--------------------------------\nNumber of group 2 sites (by water body group)\n--------------------------------\n")
+xtabs(group_2 ~ Waterbody_group, data_for_plot)
+cat("\n")
+xtabs(group_2 ~ Included_in_analysis, data_for_plot)
+cat("\n---------------\n- Number of rows (years * sites)\n---------------\n")
+xtabs(group_2_rows ~ Waterbody_group, data_for_plot)
+xtabs(group_2_rows ~ Included_in_analysis, data_for_plot)
+
+cat("\n--------------------------------\nNumber of group 3 sites (by water body group)\n--------------------------------\n")
+xtabs(group_3 ~ Waterbody_group, data_for_plot)
+cat("\n")
+xtabs(group_3 ~ Included_in_analysis, data_for_plot)
+cat("\n---------------\n- Number of rows (years * sites)\n---------------\n")
+xtabs(group_3_rows ~ Waterbody_group, data_for_plot)
+xtabs(group_3_rows ~ Included_in_analysis, data_for_plot)
+
+
+```
+
+
+### Statistics for the 4 model runs  
+
+```{r}
+
+cat("Run 1: 1992 onwards, group 1 - number of water bodies, sites and site-years\n")
+
+df <- dat %>%
+  filter(sitegroup %in% 1) %>%
+  group_by(countryCode, waterbody) %>%
+  summarize(
+    n_rows = length(site),
+    n_sites = length(unique(site)), 
+    group_1 = length(unique(site[sitegroup %in% 1])),
+    group_2 = length(unique(site[sitegroup %in% 2])),
+    group_3 = length(unique(site[sitegroup %in% 3])), .groups = "drop"
+  ) %>%
+  filter(group_1 > 0)
+nrow(df)
+sum(df$n_sites)
+sum(df$n_rows)
+
+
+cat("--------------------------------------------\n")
+cat("Run 2: 2000 onwards, group 1-3 - number of water bodies, sites and site-years\n")
+
+df <- dat %>%
+  filter(year >= 2000) %>%
+  group_by(countryCode, waterbody) %>%
+  summarize(
+    n_rows = length(site),
+    n_sites = length(unique(site)), 
+    group_1 = length(unique(site[sitegroup %in% 1])),
+    group_2 = length(unique(site[sitegroup %in% 2])),
+    group_3 = length(unique(site[sitegroup %in% 3])), .groups = "drop"
+  ) %>%
+  filter((group_1 > 0) | group_2 > 0)
+nrow(df)
+sum(df$n_sites)
+sum(df$n_rows)
+
+cat("--------------------------------------------\n")
+cat("Run 3: 2000 onwards, group 1-2 - number of water bodies, sites and site-years\n")
+
+df <- dat %>%
+  filter(sitegroup %in% 1:2) %>%
+  filter(year >= 2000) %>%
+  group_by(countryCode, waterbody) %>%
+  summarize(
+    n_rows = length(site),
+    n_sites = length(unique(site)), 
+    group_1 = length(unique(site[sitegroup %in% 1])),
+    group_2 = length(unique(site[sitegroup %in% 2])),
+    group_3 = length(unique(site[sitegroup %in% 3])), .groups = "drop"
+  ) %>%
+  filter((group_1 > 0) | group_2 > 0)
+nrow(df)
+sum(df$n_sites)
+sum(df$n_rows)
+
+
+cat("--------------------------------------------\n")
+cat("Run 4: 2000 onwards, group 1 - number of water bodies, sites and site-years\n")
+
+df <- dat %>%
+  filter(sitegroup %in% 1) %>%
+  filter(year >= 2000) %>%
+  group_by(countryCode, waterbody) %>%
+  summarize(
+    n_rows = length(site),
+    n_sites = length(unique(site)), 
+    group_1 = length(unique(site[sitegroup %in% 1])),
+    group_2 = length(unique(site[sitegroup %in% 2])),
+    group_3 = length(unique(site[sitegroup %in% 3])), .groups = "drop"
+  ) %>%
+  filter((group_1 > 0) | group_2 > 0)
+nrow(df)
+sum(df$n_sites)
+sum(df$n_rows)
+
+
+```
+
+
 
 ### Make site a factor variable  
 
@@ -980,7 +1135,7 @@ if (FALSE){
 
 get_fit_allyears_stoch <- function(i, data){
   # Make stochastic data  
-  dat_stoch <- dat_wb_means[[1]] %>%
+  dat_stoch <- data %>%
     mutate(no3_stoch = rnorm(n=length(no3), mean = no3, sd = no3_se))
   # GAM model
   model <- gam(no3_stoch ~ s(x, y, year, k=600), data = dat_stoch)
@@ -1022,23 +1177,22 @@ get_fit_allyears_stoch <- function(i, data){
 if (rerun_gam_fitting2){
 # if(TRUE) {
   
-  # For some reason, this doesn't seem to work:
-  # mod <- purrr::map(
-  #   run_datasel, ~gam(no3 ~ s(x, y, year, k=600), data = dat[.,]))
-  # (neither does a for-next loop)
+
   
   set.seed(20)
+  repl_number <- 1:30
   
   tic()
-  mod1 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[1]])
+  mod1 <- map_dfr(repl_number, get_fit_allyears_stoch, data = dat_wb_means[[1]])
   saveRDS(mod1, "Data/135_mod1.rds")
-  mod2 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[2]])
+  mod2 <- map_dfr(repl_number, get_fit_allyears_stoch, data = dat_wb_means[[2]])
   saveRDS(mod2, "Data/135_mod2.rds")
-  mod3 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[3]])
+  set.seed(21)
+  mod3 <- map_dfr(repl_number, get_fit_allyears_stoch, data = dat_wb_means[[3]])
   saveRDS(mod3, "Data/135_mod3.rds")
-  mod4 <- map_dfr(1:10, get_fit_allyears_stoch, data = dat_wb_means[[4]])
+  mod4 <- map_dfr(repl_number, get_fit_allyears_stoch, data = dat_wb_means[[4]])
   saveRDS(mod4, "Data/135_mod4.rds")
-  toc() # 1551 sec (25 min)
+  toc() # 4400 sec circa (73 min)
 
 }
 
@@ -1059,149 +1213,169 @@ rm(mod1, mod2, mod3, mod4)
 
 ```
 
-#### Check models  
+#### Check some water bodies    
 ```{r}
 
 # Some random water bodies
 
+i <- 3
+
 set.seed(25)
-wb_test <- mod_raw[[1]] %>% pull(waterbody) %>% unique() %>% sample(size = 12)
+wb_test <- mod_raw[[i]] %>% pull(waterbody) %>% unique() %>% sample(size = 12)
 
 
-ggplot(mod_raw[[1]] %>% filter(waterbody %in% wb_test), aes(year, spatialfit)) +
+ggplot(mod_raw[[i]] %>% filter(waterbody %in% wb_test), aes(year, spatialfit)) +
   geom_point(shape = "-") +
   facet_wrap(vars(waterbody))
 
-ggplot(mod_raw[[1]] %>% filter(waterbody %in% wb_test), aes(year, se.spatialfit)) +
+ggplot(mod_raw[[i]] %>% filter(waterbody %in% wb_test), aes(year, se.spatialfit)) +
   geom_point(shape = "-") +
   facet_wrap(vars(waterbody))
 
-ggplot(mod_raw[[1]] %>% filter(waterbody %in% "FRDG330"), aes(year, spatialfit)) +
+ggplot(mod_raw[[i]] %>% filter(waterbody %in% "FRDG330"), aes(year, spatialfit)) +
   geom_point(size = rel(0.5))
 
-ggplot(mod_raw[[1]] %>% filter(waterbody %in% "FRDG330"), aes(year, se.spatialfit)) +
+ggplot(mod_raw[[i]] %>% filter(waterbody %in% "FRDG330"), aes(year, se.spatialfit)) +
   geom_point(size = rel(0.5))
 
- 
 ```
 
-### Summarize per water body  
 
+### Summarize per year for each repl  
+
+#### Test 
 ```{r}
 
-get_summaryfit_allyears <- function(dat_fitted_values){
-  dat_fitted_values %>%
-    group_by(waterbody, year) %>%
-    summarize(
-      spatialfit_mean = mean(spatialfit),
-      spatialfit_mean_sd = sd(spatialfit),
-      spatialfit_se_mean = sqrt(mean(se.spatialfit^2)), .groups = "drop"
-    ) %>% 
-    as.data.frame()
-}
-
-
-```
-
-```{r}
-
-get_summaryfit_allyears <- function(dat_fitted_values){
-  dat_fitted_values %>%
-    group_by(waterbody, year) %>%
-    summarize(
-      spatialfit_mean = mean(spatialfit),
-      spatialfit_mean_sd = sd(spatialfit),
-      spatialfit_se_mean = sqrt(mean(se.spatialfit^2)), .groups = "drop"
-    ) %>% 
-    as.data.frame()
-}
-  
-# test <- get_summaryfit_allyears(mod_raw[[1]])  
-
-mod <- purrr::map_dfr(mod_raw, get_summaryfit_allyears, .id = "modelrun")  
-
-ggplot(mod_raw[[1]] %>% filter(waterbody %in% wb_test), aes(year, se.spatialfit)) +
-  geom_point(shape = "-") +
-  facet_wrap(vars(waterbody))  
-
-```
-
-```{r}
-
-mod_raw[[1]] %>%
+df_by_year_repl <- mod_raw[[1]] %>% 
   group_by(repl, year) %>%
   summarize(
-    yearfit_byrep_mean = mean(spatialfit_mean),
-    yearfit_byrep_sd = sd(spatialfit_mean),
-    yearfit_byrep_sd_mean = mean(spatialfit_se_mean), .groups = "drop"
-  )
+    no3_repl = mean(spatialfit),
+    no3_repl_se = mean(se.spatialfit), .groups = "drop")
 
-```
+df_by_year <- df_by_year_repl %>% 
+  group_by(year) %>%
+  summarize(no3_mean = mean(no3_repl),
+            no3_sd1 = sd(no3_repl),
+            no3_sd2 = sqrt((sd(no3_repl))^2 + no3_repl_se), .groups = "drop")
 
-### Get annual means  
-
-```{r}
-
-dat_means <- mod %>%
-  group_by(modelrun,year) %>%
-  summarize(
-    yearfit_mean = mean(spatialfit_mean),
-    yearfit_sd = sd(spatialfit_mean),
-    yearfit_sd_mean = mean(spatialfit_se_mean), .groups = "drop"
-  )
-  
-
-dat_means <- mod_raw[[1]] %>%
-  group_by(modelrun, year, repl) %>%
-  summarize()
-
-  
-
-
-```
-
-
-
-#### Plot year effect   
-
-```{r}
-
-get_modelfit_byyear <- function(data_with_fit){
-  yearmod <- gam(spatialfit ~ s(year, k = 8), data = data_with_fit)  
-  # yearmod <- gam(no3_fit ~ s(year, k = 8), data = data_with_fit %>% mutate(no3_fit = 10^spatialfit))  
-  yearmod_pred = data.frame(year = seq(min(data_with_fit$year), 2020))
-  fit_object <- predict(yearmod, newdata = yearmod_pred, se.fit = TRUE)
-  yearmod_pred %>%
-    mutate(yearfit = fit_object$fit,
-           se.yearfit = fit_object$se.fit)
-}
-
-dat_year_fit <- map_dfr(dat_wb_fit_allyrs, get_modelfit_byyear, .id = "modelrun") %>%
-  mutate(
-    yearfit_lo = yearfit - 2*se.yearfit,
-    yearfit_up = yearfit + 2*se.yearfit,
-    yearfit_back = 10^yearfit,
-    yearfit_back_lo = 10^yearfit_lo,
-    yearfit_back_up = 10^yearfit_up
-  )
-
-ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
-  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
-              fill = "grey50", alpha = 0.3) +
-  geom_line(aes(color = modelrun)) +
-  labs(y = "log10(NO3 conc.)") +
+ggplot(df_by_year_repl, aes(year, no3_repl)) +
+  geom_point(color = "lightblue3") +
+  geom_line(data = df_by_year, aes(y = no3_mean)) +
+  geom_line(data = df_by_year, aes(y = no3_mean - 2*no3_sd1), linetype = "dashed") +
+  geom_line(data = df_by_year, aes(y = no3_mean + 2*no3_sd1), linetype = "dashed") +
   theme_bw()
 
-ggplot(dat_year_fit, aes(year, yearfit, group = modelrun)) +
-  geom_ribbon(aes(ymin = yearfit_lo, ymax = yearfit_up), 
-              fill = "grey50", alpha = 0.3) +
-  geom_line() +
+ggplot(df_by_year_repl, aes(year, no3_repl)) +
+  geom_point(color = "lightblue3") +
+  geom_line(data = df_by_year, aes(y = no3_mean)) +
+  geom_line(data = df_by_year, aes(y = no3_mean - 2*no3_sd2), linetype = "dashed") +
+  geom_line(data = df_by_year, aes(y = no3_mean + 2*no3_sd2), linetype = "dashed") +
+  theme_bw()
+
+
+```
+#### All four runs  
+```{r}
+
+df_by_year_repl <- map_dfr(
+  mod_raw, 
+  ~group_by(., repl, year) %>% 
+    summarize(no3_repl = mean(spatialfit), .groups = "drop"),
+  .id = "modelrun")
+
+df_by_year <- df_by_year_repl %>% 
+  group_by(modelrun, year) %>%
+  summarize(no3_mean = mean(no3_repl),
+            no3_sd = sd(no3_repl), .groups = "drop")
+
+ggplot(df_by_year_repl, aes(year, no3_repl)) +
+  geom_point(color = "lightblue3") +
+  geom_line(data = df_by_year, aes(y = no3_mean)) +
+  geom_line(data = df_by_year, aes(y = no3_mean - 2*no3_sd), linetype = "dashed") +
+  geom_line(data = df_by_year, aes(y = no3_mean + 2*no3_sd), linetype = "dashed") +
+  facet_wrap(vars(modelrun)) +
   theme_bw() +
-  labs(y = "log10(NO3 conc.)") +
-  facet_wrap(vars(modelrun))
+  labs(x = "Year", y = "NO3 concentration")
+
+ggplot(df_by_year, aes(year, no3_repl, color = modelrun)) +
+  geom_line(aes(y = no3_mean)) +
+  geom_line(aes(y = no3_mean - 2*no3_sd), linetype = "dashed") +
+  geom_line(aes(y = no3_mean + 2*no3_sd), linetype = "dashed") +
+  scale_color_brewer("Model run", palette = "Dark2") +
+  theme_bw() +
+  labs(x = "Year", y = "NO3 concentration")
+
+
+```
+
+## 9. Change 2000-2020 mapped  
+
+### Trend by water body - function   
+```{r}
+
+get_change <- function(predictions_with_repl){
+  
+  df2020 <- predictions_with_repl %>% filter(year %in% 2020) %>% 
+    rename(fit2020 = spatialfit, 
+           se2020 = se.spatialfit) 
+  df2000 <- predictions_with_repl %>% filter(year %in% 2000) %>% 
+    rename(fit2000 = spatialfit, 
+           se2000 = se.spatialfit)
+  
+  df_change <- left_join(
+    df2020 %>% select(repl, waterbody, x, y, fit2020, se2020),
+    df2000 %>% select(repl, waterbody, x, y, fit2000, se2000),
+    by = c("repl", "waterbody", "x", "y")
+  ) %>%
+    mutate(
+      change = fit2020 - fit2000,
+      change_se = sqrt(se2020^2 + se2000^2)) %>%
+    group_by(waterbody, x, y) %>%
+    summarise(
+      change_lo = mean(change) - 2*mean(change_se),
+      change_up = mean(change) + 2*mean(change_se),
+      .groups = "drop") %>%
+    mutate(
+      change_text = case_when(
+        change_lo > 0 ~ "Increase",
+        change_up < 0 ~ "Decrease",
+        TRUE ~ "Inconclusive"),
+      change_text = factor(change_text, 
+                           levels = c("Increase", "Decrease", "Inconclusive"))
+    )
+  df_change
+}
+
+# test <- get_change(mod_raw[[1]])
+# table(test$change_text)
+
+```
+### Trend by water body - calculate  
+
+```{r}
+
+df_change <- map_dfr(mod_raw, get_change, .id = "modelrun")
 
 ```
 
 
+### Plot  
+```{r}
+#| fig-width: 9
+#| fig-height: 12
 
+gg <- ggplot(df_change, aes(x,y)) +
+  geom_path(data = country_borders, aes(x,y,group = group)) +
+  geom_point(aes(color = change_text)) +
+  facet_grid(vars(modelrun), vars(change_text)) +
+  coord_fixed() +
+  theme_bw() +
+  easy_remove_legend() +
+  easy_remove_axes(what = c("text", "title", "ticks"))  
+
+ggsave("Figures/Change_by_waterbody.png", gg, width = 7, height = 9, dpi = 200)
+
+gg
+
+```
 
