@@ -17,7 +17,7 @@ editor: visual
 
 -   Some exploratory plots and tables
 
-## 0.  Settings
+## 0. Settings
 
 ```{r}
 
@@ -85,6 +85,12 @@ if (FALSE){
   saveRDS(dat_all_site,
           "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.rda")
 }
+
+check <- readRDS(
+          "Input_data/WISE_Indicators.indicators2020.AggregatedData_Indicator_GWNO3.rda")
+cat("Number of rows:", nrow(check), "\n")
+cat("Number of sites:", check %>% distinct(monitoringSiteIdentifier, monitoringSiteIdentifierScheme) %>% nrow(), "\n")
+cat("Number of water bodies:", check %>% distinct(waterBodyIdentifier, waterBodyIdentifierScheme) %>% nrow(), "\n")
 
 ```
 
@@ -262,7 +268,7 @@ saveRDS(dat_01b, "Data/101_dat_01b.rds")
 
 ```
 
-### Filter values under loq and with value > 2.5
+### Filter values under loq and with value \> 2.5
 
 ```{r}
 
@@ -377,8 +383,8 @@ dat <- dat_02 %>%
 
 ### Add transformed coordinates
 
-- Unit: meters
-- Reference point (where x = =, y = 0): lon = -15, lat = 27  
+-   Unit: meters
+-   Reference point (where x = =, y = 0): lon = -15, lat = 27
 
 ```{r}
 
@@ -566,7 +572,8 @@ dat %>%
 
 ### Length of time covered vs. number of years
 
-### Number of sites  
+### Number of sites
+
 ```{r}
 
 cat("Number of sites:", length(unique(dat$site)), "\n")
@@ -576,7 +583,6 @@ dat %>%
   count(datatype) 
 
 ```
-
 
 #### Site level
 
@@ -674,6 +680,11 @@ dat %>%
 
 ```{r}
 
+cat("Statistics before filtering away data with 'Number_of_years' = 1\n")
+cat("Number of rows:", nrow(dat), "\n")
+cat("Number of sites:", dat %>% distinct(site) %>% nrow(), "\n")
+cat("Number of water bodies:", dat %>% distinct(waterbody, waterBodyIdentifierScheme) %>% nrow(), "\n")
+
 dat_sites <- dat %>%
   distinct(site, x, y, year) %>%
   group_by(site, x, y) %>%
@@ -689,7 +700,7 @@ dat_sites <- dat %>%
 cat("Number of sites:", nrow(dat_sites), "\n")
 
 #
-# Check if some sites have nore than one coordinate
+# Check if some sites have more than one coordinate
 #
 check <- dat_sites %>%
   add_count(site) %>%
@@ -707,7 +718,15 @@ if (nrow(check) > 0)
 dat_sites <- dat_sites %>%
   filter(Number_of_years >= crit["min_no_yrs_all"])
 
-cat("Number of sites after removing '1-years':", nrow(dat_sites), "\n")
+cat("-------------------------------------------------\n")
+cat("Number of sites after removing '1-years':", nrow(dat_sites), "\n")  
+
+check <- dat[dat$site %in% pull(dat_sites, site),]
+cat("Statistics after filtering away data with 'Number_of_years' = 1\n")
+cat("Number of rows:", nrow(check), "\n")
+cat("Number of sites:", check %>% distinct(site) %>% nrow(), "\n")
+cat("Number of water bodies:", check %>% distinct(waterbody, waterBodyIdentifierScheme) %>% nrow(), "\n")
+
 
 #
 # Group 1 - always include these:
@@ -741,9 +760,9 @@ cat("Number of sites in group 3a ('possibly include after 2000'):", nrow(dat_sit
 
 ```
 
-#### Calculating distances  
+#### Calculating distances
 
-* Calculating distances between all sites in group sites3a and all sites in groups 1+2  
+-   Calculating distances between all sites in group sites3a and all sites in groups 1+2
 
 ```{r}
 #| echo: false
